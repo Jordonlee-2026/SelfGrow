@@ -56,9 +56,9 @@
         const APP_ID = "selfgrow-v3-3"; 
 
         // --- 辅助工具 ---
-        const saveToLocal = (key, data) => localStorage.setItem(`${APP_ID}_${key}`, JSON.stringify(data));
+        const saveToLocal = (key, data) => localStorage.setItem(`${API_KEY}_${key}`, JSON.stringify(data));
         const getFromLocal = (key) => {
-            const data = localStorage.getItem(`${APP_ID}_${key}`);
+            const data = localStorage.getItem(`${API_KEY}_${key}`);
             return data ? JSON.parse(data) : null;
         };
 
@@ -79,10 +79,10 @@
             );
         };
 
-        // --- AI 调用函数 (支持无 Key 优雅降级) ---
+        // --- AI 调用函数 ---
         async function fetchAI(prompt, userKey, systemPrompt = "你是一个温柔且富有洞察力的心理共鸣伙伴。") {
             const apiKey = userKey || API_KEY;
-            if (!apiKey) return null; // 如果没有 Key，直接返回 null
+            if (!apiKey) return null;
 
             const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
             
@@ -212,6 +212,7 @@
                     {view === 'main' && (
                         <MainDashboard 
                             userData={userData} 
+                            setUserData={setUserData}
                             dailyRecords={dailyRecords} 
                             currentDay={currentDayIndex}
                             setDailyRecords={setDailyRecords}
@@ -274,14 +275,13 @@
             );
         }
 
-        // --- 契约初始化 (优化: API Key 非必填) ---
+        // --- 契约初始化 ---
         function ContractSetup({ onSign }) {
             const [form, setForm] = useState({
                 tasks: [{ id: 1, name: "", intention: "" }, { id: 2, name: "", intention: "" }, { id: 3, name: "", intention: "" }],
                 apiKey: ""
             });
 
-            // 现在只需要完成 3 个任务设定即可点击签署
             const isComplete = form.tasks.every(t => t.name && t.intention);
 
             return (
@@ -325,8 +325,11 @@
         }
 
         // --- 主面板 ---
-        function MainDashboard({ userData, dailyRecords, currentDay, setDailyRecords, onOpenHistory, setModalContent }) {
+        function MainDashboard({ userData, setUserData, dailyRecords, currentDay, setDailyRecords, onOpenHistory, setModalContent }) {
             const [quote, setQuote] = useState("成长的秘诀在于持续。");
+            const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+            const [tempApiKey, setTempApiKey] = useState(userData.apiKey || "");
+            
             const todayKey = `day_${currentDay}`;
             const todayRecord = dailyRecords[todayKey] || { tasks: [false, false, false], times: [0, 0, 0], journal: "", skips: 0, whispers: ["", "", ""], journalSubmitted: false };
 
@@ -336,7 +339,7 @@
                     if (q) setQuote(q);
                 };
                 fetchDailyQuote();
-            }, [currentDay]);
+            }, [currentDay, userData.apiKey]);
 
             const updateToday = (updates) => {
                 setDailyRecords(prev => ({
@@ -351,11 +354,16 @@
                 
                 let whisper = "";
                 if (userData.apiKey) {
-                    whisper = await fetchAI(`用户完成了“${userData.tasks[idx].name}”，写一句极简（10字左右）鼓励语，纯文本。`, userData.apiKey);
+                    whisper = await fetchAI(`用户完成了“${userData.tasks[idx].name}”，写一句极简鼓励语。`, userData.apiKey);
                 }
                 
                 const nw = [...todayRecord.whispers]; nw[idx] = whisper;
                 updateToday({ tasks: newTasks, whispers: nw });
+            };
+
+            const saveSettings = () => {
+                setUserData({ ...userData, apiKey: tempApiKey });
+                setIsSettingsOpen(false);
             };
 
             const totalTime = useMemo(() => Object.values(dailyRecords).reduce((acc, rec) => acc + (rec.times?.reduce((a, b) => a + Number(b), 0) || 0), 0), [dailyRecords]);
@@ -367,7 +375,10 @@
                     <header className={`relative bg-white/40 rounded-[2.5rem] p-8 border border-[#E2E8CE] transition-all duration-1000 ${isDailyFull ? 'brightness-95' : ''}`}>
                         <div className="flex justify-between items-start mb-4">
                             <div><h1 className="text-2xl font-serif text-[#344E41]">SelfGrow 30天习惯养成计划</h1><span className="text-xs text-[#A3B18A] tracking-widest font-bold">DAY {currentDay + 1} OF 30</span></div>
-                            <button onClick={onOpenHistory} className="p-2 bg-white/60 rounded-full shadow-sm hover:bg-white transition-all"><Icon name="clock" size={20} className="text-[#588157]" /></button>
+                            <div className="flex gap-2">
+                                <button onClick={() => setIsSettingsOpen(true)} className="p-2 bg-white/60 rounded-full shadow-sm hover:bg-white transition-all"><Icon name="settings" size={20} className="text-[#A3B18A]" /></button>
+                                <button onClick={onOpenHistory} className="p-2 bg-white/60 rounded-full shadow-sm hover:bg-white transition-all"><Icon name="clock" size={20} className="text-[#588157]" /></button>
+                            </div>
                         </div>
                         <WatercolorTree dayIndex={currentDay} completedCount={todayRecord.tasks.filter(Boolean).length} />
                         <div className="text-center mt-6 italic text-sm text-[#6B705C] max-w-md mx-auto">{quote}</div>
@@ -379,27 +390,37 @@
                             <h3 className="font-serif text-lg text-[#344E41] mb-6">核心成长</h3>
                             <div className="space-y-6">
                                 {userData.tasks.map((task, idx) => (
-                                    <div key={idx} className={`flex items-start gap-4 p-4 rounded-2xl transition-all ${todayRecord.tasks[idx] ? 'bg-[#E2E8CE]/20' : 'hover:bg-white/40'}`}>
-                                        <button onClick={() => handleTaskToggle(idx)} disabled={todayRecord.tasks[idx]} className={`mt-0.5 transition-transform active:scale-90 ${todayRecord.tasks[idx] ? 'text-[#588157]' : 'text-[#DAD7CD]'}`}>
-                                            <Icon name={todayRecord.tasks[idx] ? "check-circle-2" : "circle"} size={24} />
+                                    <div key={idx} className={`flex items-center gap-4 p-5 rounded-[1.5rem] transition-all border border-transparent ${todayRecord.tasks[idx] ? 'bg-[#E2E8CE]/20 border-[#E2E8CE]/40' : 'hover:bg-white/50 hover:border-[#E2E8CE]/30'}`}>
+                                        <button onClick={() => handleTaskToggle(idx)} disabled={todayRecord.tasks[idx]} className={`transition-transform active:scale-90 ${todayRecord.tasks[idx] ? 'text-[#588157]' : 'text-[#DAD7CD]'}`}>
+                                            <Icon name={todayRecord.tasks[idx] ? "check-circle-2" : "circle"} size={32} />
                                         </button>
-                                        <div className="flex-1 space-y-1">
-                                            <div className="flex justify-between font-medium">
-                                                <span className={todayRecord.tasks[idx] ? 'line-through text-[#A3B18A]' : 'text-[#344E41]'}>{task.name}</span>
-                                                <div className="flex items-center gap-1 text-[10px] text-[#A3B18A]">
-                                                    <input type="number" readOnly={todayRecord.tasks[idx]} className="w-8 text-right bg-transparent outline-none focus:text-[#588157]" value={todayRecord.times[idx]} 
-                                                           onChange={e => { const nt = [...todayRecord.times]; nt[idx] = e.target.value; updateToday({times: nt}); }} /> MIN
-                                                </div>
+                                        
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex flex-col">
+                                                <span className={`text-base font-medium truncate ${todayRecord.tasks[idx] ? 'line-through text-[#A3B18A]' : 'text-[#344E41]'}`}>{task.name}</span>
+                                                <p className="text-xs text-[#6B705C] italic truncate max-w-[150px] sm:max-w-none">“{task.intention}”</p>
+                                                {todayRecord.whispers[idx] && <p className="text-[11px] text-[#588157] font-medium pt-1 animate-in fade-in slide-in-from-left-2">{todayRecord.whispers[idx]}</p>}
                                             </div>
-                                            <p className="text-xs text-[#6B705C] italic">“{task.intention}”</p>
-                                            {todayRecord.whispers[idx] && <p className="text-[11px] text-[#588157] font-medium pt-1 animate-in fade-in slide-in-from-left-2">{todayRecord.whispers[idx]}</p>}
+                                        </div>
+
+                                        {/* 优化后的右侧时间录入区 */}
+                                        <div className={`shrink-0 w-16 h-16 flex flex-col items-center justify-center rounded-2xl border transition-all ${todayRecord.tasks[idx] ? 'bg-transparent border-transparent' : 'bg-[#F2F4ED] border-[#E2E8CE]/50 shadow-sm'}`}>
+                                            <span className="text-[9px] uppercase tracking-tighter text-[#A3B18A] font-bold">MIN</span>
+                                            <input 
+                                                type="number" 
+                                                readOnly={todayRecord.tasks[idx]} 
+                                                className={`w-full bg-transparent text-xl font-serif text-center outline-none ${todayRecord.tasks[idx] ? 'opacity-30' : 'focus:text-[#588157]'}`} 
+                                                placeholder="0"
+                                                value={todayRecord.times[idx] || ""} 
+                                                onChange={e => { const nt = [...todayRecord.times]; nt[idx] = e.target.value; updateToday({times: nt}); }} 
+                                            />
                                         </div>
                                     </div>
                                 ))}
                             </div>
                             {isDailyFull && (
                                 userData.apiKey ? (
-                                    <button onClick={async () => setModalContent(await fetchAI("今日全勤，写一段温柔夸奖，100字内。", userData.apiKey))} className="w-full mt-6 py-4 bg-[#A3B18A] text-white rounded-xl shadow-md hover:bg-[#588157] transition-all font-bold flex items-center justify-center gap-2 animate-in fade-in duration-500">
+                                    <button onClick={async () => setModalContent(await fetchAI("今日全勤，写一段温柔夸奖。", userData.apiKey))} className="w-full mt-6 py-4 bg-[#A3B18A] text-white rounded-xl shadow-md hover:bg-[#588157] transition-all font-bold flex items-center justify-center gap-2">
                                         <Icon name="award" size={18} /> 获取 AI 森林鼓励
                                     </button>
                                 ) : (
@@ -436,26 +457,49 @@
                     <footer className={`bg-white/60 rounded-[2rem] p-6 border border-[#E2E8CE] transition-all duration-700 ${todayRecord.journalSubmitted ? 'opacity-70 saturate-50' : ''}`}>
                         <div className="flex justify-between items-center mb-4">
                             <h3 className="font-serif text-[#344E41] text-lg">心灵留白</h3>
-                            <span className="text-[10px] text-[#A3B18A]">{todayRecord.journalSubmitted ? '今日复盘已封存' : '建议：记录事实、深度提问、总结结论'}</span>
+                            <span className="text-[10px] text-[#A3B18A]">{todayRecord.journalSubmitted ? '今日复盘已封存' : '记录你的事实、提问与结论'}</span>
                         </div>
                         <textarea readOnly={todayRecord.journalSubmitted} className="w-full h-32 bg-transparent outline-none resize-none leading-relaxed text-[#6B705C] placeholder:text-[#DAD7CD]" 
                                   placeholder="在这里存入今日的森林回忆..." value={todayRecord.journal} onChange={e => updateToday({ journal: e.target.value })} />
                         <div className="flex justify-end mt-4">
-                            <button disabled={todayRecord.journalSubmitted} onClick={() => { updateToday({ journalSubmitted: true }); setModalContent("你的文字已化作养分，存入森林深处。今天的复盘已圆满封存。"); }}
+                            <button disabled={todayRecord.journalSubmitted} onClick={() => { updateToday({ journalSubmitted: true }); setModalContent("你的文字已化作养分，存入森林深处。"); }}
                                     className={`px-8 py-2.5 rounded-full text-sm flex items-center gap-2 transition-all shadow-md ${todayRecord.journalSubmitted ? 'bg-[#DAD7CD] text-[#6B705C] cursor-not-allowed shadow-none' : 'bg-[#344E41] text-white hover:bg-[#3A5A40] shadow-[#344E41]/20'}`}>
-                                <Icon name={todayRecord.journalSubmitted ? "lock" : "send"} size={14} /> {todayRecord.journalSubmitted ? '已存入森林' : '存入森林'}
+                                <Icon name={todayRecord.journalSubmitted ? "lock" : "send"} size={14} /> {todayRecord.journalSubmitted ? '已存入' : '存入森林'}
                             </button>
                         </div>
                     </footer>
+
+                    {/* 设置弹窗 */}
+                    {isSettingsOpen && (
+                        <div className="fixed inset-0 z-[110] flex items-center justify-center p-6">
+                            <div className="absolute inset-0 bg-[#344E41]/20 backdrop-blur-sm" onClick={() => setIsSettingsOpen(false)} />
+                            <div className="bg-white p-8 rounded-[2rem] max-w-sm w-full shadow-2xl relative animate-in zoom-in-95 duration-200">
+                                <h4 className="text-xl font-serif text-[#344E41] mb-6 flex items-center gap-2"><Icon name="settings" size={20} /> 系统设置</h4>
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="block text-xs uppercase tracking-widest text-[#A3B18A] mb-2 font-bold">API Key</label>
+                                        <input 
+                                            type="password" 
+                                            placeholder="输入你的 Gemini API Key" 
+                                            className="w-full bg-[#FDFCF8] rounded-xl px-4 py-3 border border-[#DAD7CD] outline-none focus:ring-1 focus:ring-[#A3B18A]"
+                                            value={tempApiKey} 
+                                            onChange={e => setTempApiKey(e.target.value)} 
+                                        />
+                                        <p className="mt-2 text-[10px] text-[#A3B18A] leading-relaxed italic">填写 Key 后解锁 AI 森林密语与深度报告功能。</p>
+                                    </div>
+                                    <button onClick={saveSettings} className="w-full py-3 bg-[#588157] text-white rounded-xl font-bold hover:bg-[#344E41] transition-all">保存设置</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </div>
             );
         }
 
-        // --- 历史回溯组件 ---
+        // --- 历史回溯 ---
         function HistoryView({ dailyRecords, userData, onBack }) { 
             const [selectedDay, setSelectedDay] = useState(0);
             const record = dailyRecords[`day_${selectedDay}`];
-
             return (
                 <div className="max-w-4xl mx-auto px-6 py-12 min-h-screen animate-in fade-in duration-500">
                     <button onClick={onBack} className="flex items-center gap-2 text-[#A3B18A] hover:text-[#588157] mb-10 transition-colors font-medium">
@@ -476,17 +520,18 @@
                         <div className="md:col-span-2 bg-white/80 backdrop-blur-sm rounded-3xl p-8 border border-[#E2E8CE] shadow-sm">
                             {record ? (
                                 <div className="space-y-8 animate-in fade-in slide-in-from-right-4">
-                                    <div className="flex justify-between border-b border-[#F0F0F0] pb-4">
+                                    <div className="flex justify-between border-b border-[#F0F0F0] pb-4 items-end">
                                         <span className="text-xl font-serif text-[#344E41]">DAY {selectedDay + 1} 定格</span>
-                                        <div className="flex gap-2 text-[#A3B18A]">
-                                            {[...Array(3 - (record.skips || 0))].map((_, i) => <Icon key={i} name="leaf" size={14} className="fill-current" />)}
-                                        </div>
+                                        <span className="text-xs text-[#A3B18A]">共投入 {record.times.reduce((a,b)=>a+Number(b),0)} 分钟</span>
                                     </div>
                                     <div className="space-y-4">
                                         {userData.tasks.map((task, idx) => (
-                                            <div key={idx} className="flex items-center gap-3">
-                                                <Icon name={record.tasks[idx] ? "check-circle-2" : "lock"} size={18} className={record.tasks[idx] ? "text-[#588157]" : "text-[#DAD7CD]"} />
-                                                <span className={`text-sm ${record.tasks[idx] ? 'text-[#344E41]' : 'text-[#DAD7CD]'}`}>{task.name} ({record.times[idx] || 0}m)</span>
+                                            <div key={idx} className="flex flex-col gap-1 p-3 rounded-xl bg-[#FDFCF8]/50 border border-[#E2E8CE]/30">
+                                                <div className="flex items-center gap-2">
+                                                    <Icon name={record.tasks[idx] ? "check-circle-2" : "circle"} size={18} className={record.tasks[idx] ? "text-[#588157]" : "text-[#DAD7CD]"} />
+                                                    <span className={`text-sm font-medium ${record.tasks[idx] ? 'text-[#344E41]' : 'text-[#DAD7CD]'}`}>{task.name}</span>
+                                                </div>
+                                                <div className="pl-7 text-[10px] text-[#A3B18A]">专注时长: {record.times[idx] || 0} min</div>
                                             </div>
                                         ))}
                                     </div>
@@ -507,7 +552,7 @@
             );
         }
 
-        // --- 终极报告组件 ---
+        // --- 终极报告 ---
         function FinalReport({ userData, dailyRecords, onReset }) { 
             const [report, setReport] = useState("");
             const [loading, setLoading] = useState(true);
@@ -523,7 +568,7 @@
                         const result = await fetchAI(prompt, userData.apiKey);
                         setReport(result);
                     } else {
-                        setReport("恭喜你完成了 30 天的成长旅程。这棵树见证了你的每一次坚持与努力。虽然没有开启 AI 深度分析，但你在这段时间里留下的每一份‘心灵留白’都是最真实的成长注脚。继续保持这份坚韧，去开启新的旅程吧。");
+                        setReport("恭喜你完成了 30 天的成长旅程。这棵树见证了你的每一次坚持与努力。每一份‘心灵留白’都是最真实的成长注脚。");
                     }
                     setLoading(false);
                 };
