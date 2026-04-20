@@ -1,239 +1,771 @@
+
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SelfGrow - 30天习惯养成计划</title>
-    <!-- 引入 Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- 引入 React 核心库 -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <!-- 引入 Babel 用于解析 JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- 引入 Lucide 图标库 -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700&family=Noto+Sans+SC:wght@300;400;500;700&display=swap');
-        
+
+        :root {
+            --bg: #fdfcf8;
+            --paper: rgba(255, 255, 255, 0.72);
+            --ink: #344e41;
+            --subtle: #6b705c;
+            --leaf: #588157;
+            --mist: #a3b18a;
+            --fog: #e2e8ce;
+            --sand: #dad7cd;
+            --blush: #ebc7d1;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
         body {
+            margin: 0;
+            min-height: 100vh;
             font-family: 'Noto Sans SC', sans-serif;
-            background-color: #FDFCF8;
+            color: var(--ink);
+            background:
+                radial-gradient(circle at top left, rgba(163, 177, 138, 0.16), transparent 24%),
+                radial-gradient(circle at bottom right, rgba(88, 129, 87, 0.10), transparent 28%),
+                var(--bg);
             overflow-x: hidden;
         }
+
         .font-serif {
             font-family: 'Noto Serif SC', serif;
         }
-        @keyframes pulse-slow {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.7; }
-        }
-        .animate-pulse-slow {
-            animation: pulse-slow 3s infinite;
-        }
+
         .lucide-icon-container {
             display: inline-flex;
             align-items: center;
             justify-content: center;
         }
-        .no-scrollbar::-webkit-scrollbar { display: none; }
-        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        @keyframes fade-rise {
+            from {
+                opacity: 0;
+                transform: translateY(18px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes petal-fall {
+            0% {
+                opacity: 0;
+                transform: translate3d(0, -16px, 0) rotate(0deg);
+            }
+            12% {
+                opacity: 0.9;
+            }
+            100% {
+                opacity: 0;
+                transform: translate3d(var(--drift), 170px, 0) rotate(260deg);
+            }
+        }
+
+        @keyframes pulse-halo {
+            0%, 100% {
+                opacity: 0.28;
+                transform: scale(1);
+            }
+            50% {
+                opacity: 0.42;
+                transform: scale(1.03);
+            }
+        }
+
+        .animate-fade-rise {
+            animation: fade-rise 0.55s ease-out both;
+        }
+
+        .petal {
+            position: absolute;
+            top: 8%;
+            width: 10px;
+            height: 16px;
+            border-radius: 999px 999px 999px 999px / 70% 70% 30% 30%;
+            background: rgba(235, 199, 209, 0.85);
+            animation: petal-fall 2.8s ease-in forwards;
+        }
+
+        .tree-halo {
+            animation: pulse-halo 2.8s ease-in-out infinite;
+        }
     </style>
 </head>
 <body>
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useRef, useMemo } = React;
+        const { useEffect, useMemo, useRef, useState } = React;
 
-        // --- 核心配置 ---
-        const APP_ID = "selfgrow_v3_stable_v2"; 
+        const APP_ID = "selfgrow_local_v4";
+        const QUOTE_HISTORY_KEY = "daily_quote_history";
+        const WHISPER_HISTORY_KEY = "task_whisper_history";
+        const ENCOURAGEMENT_CACHE_KEY = "day_encouragements";
+        const REPORT_CACHE_KEY = "final_reports";
 
-        // --- 存储函数 ---
         const saveToLocal = (key, data) => {
             try {
                 localStorage.setItem(`${APP_ID}_${key}`, JSON.stringify(data));
-            } catch (e) { console.error("LocalStorage save error", e); }
-        };
-        const getFromLocal = (key) => {
-            const data = localStorage.getItem(`${APP_ID}_${key}`);
-            return data ? JSON.parse(data) : null;
+            } catch (error) {
+                console.error("LocalStorage save error", error);
+            }
         };
 
-        // --- 修复后的图标助手 (解决 NotFoundError) ---
+        const getFromLocal = (key, fallback = null) => {
+            try {
+                const raw = localStorage.getItem(`${APP_ID}_${key}`);
+                return raw ? JSON.parse(raw) : fallback;
+            } catch (error) {
+                console.error("LocalStorage read error", error);
+                return fallback;
+            }
+        };
+
+        const normalizeText = (text = "") =>
+            String(text)
+                .trim()
+                .replace(/\s+/g, "")
+                .toLowerCase();
+
+        const startOfDay = (dateLike) => {
+            const date = new Date(dateLike);
+            date.setHours(0, 0, 0, 0);
+            return date;
+        };
+
+        const simpleHash = (value = "") => {
+            let hash = 0;
+            for (let i = 0; i < value.length; i += 1) {
+                hash = (hash * 31 + value.charCodeAt(i)) % 2147483647;
+            }
+            return Math.abs(hash);
+        };
+
+        const getCacheMap = (key) => getFromLocal(key, {});
+
+        const setCacheValue = (key, cacheKey, value) => {
+            const next = getCacheMap(key);
+            next[cacheKey] = value;
+            saveToLocal(key, next);
+            return value;
+        };
+
+        const uniqueById = (items) => {
+            const seen = new Set();
+            return items.filter((item) => {
+                if (seen.has(item.id)) return false;
+                seen.add(item.id);
+                return true;
+            });
+        };
+
         const Icon = ({ name, size = 24, className = "" }) => {
             const iconRef = useRef(null);
-            
+
             useEffect(() => {
-                if (window.lucide && iconRef.current) {
-                    // 创建一个临时的 i 标签供 Lucide 替换
-                    const i = document.createElement('i');
-                    i.setAttribute('data-lucide', name);
-                    i.style.width = `${size}px`;
-                    i.style.height = `${size}px`;
-                    
-                    // 清空容器并插入新节点
-                    iconRef.current.innerHTML = '';
-                    iconRef.current.appendChild(i);
-                    
-                    // 仅对该节点调用创建图标
-                    window.lucide.createIcons({
-                        elements: [i],
-                        attrs: {
-                            'stroke-width': 2,
-                            class: className
-                        }
-                    });
-                }
+                if (!window.lucide || !iconRef.current) return;
+                const i = document.createElement("i");
+                i.setAttribute("data-lucide", name);
+                i.style.width = `${size}px`;
+                i.style.height = `${size}px`;
+                iconRef.current.innerHTML = "";
+                iconRef.current.appendChild(i);
+                window.lucide.createIcons({
+                    elements: [i],
+                    attrs: {
+                        "stroke-width": 2,
+                        class: className
+                    }
+                });
             }, [name, size, className]);
 
             return (
-                <span 
-                    ref={iconRef} 
-                    className={`lucide-icon-container ${className}`} 
-                    style={{ width: `${size}px`, height: `${size}px` }} 
+                <span
+                    ref={iconRef}
+                    className={`lucide-icon-container ${className}`}
+                    style={{ width: `${size}px`, height: `${size}px` }}
                 />
             );
         };
 
-        // --- AI 调用 (Gemini 2.5 Flash) ---
-        async function fetchAI(prompt, userKey) {
-            if (!userKey) return null;
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${userKey}`;
-            let delay = 1000;
-            for (let i = 0; i < 5; i++) {
-                try {
-                    const response = await fetch(url, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            contents: [{ parts: [{ text: prompt }] }],
-                            systemInstruction: { parts: [{ text: "你是一个温柔且富有洞察力的心理共鸣伙伴。始终保持简洁，严禁使用Markdown格式。" }] }
-                        })
-                    });
-                    if (!response.ok) throw new Error('API Error');
-                    const result = await response.json();
-                    return result.candidates?.[0]?.content?.parts?.[0]?.text || null;
-                } catch (error) {
-                    if (i === 4) return null;
-                    await new Promise(res => setTimeout(res, delay));
-                    delay *= 2;
-                }
-            }
-        }
+        const taskKeywords = {
+            meditation: ["冥想", "呼吸", "静坐", "正念", "放空", "觉察"],
+            reading: ["阅读", "看书", "读书", "输入", "读", "学习"],
+            fitness: ["锻炼", "运动", "跑步", "健身", "拉伸", "瑜伽", "跳绳", "散步"],
+            writing: ["写作", "写日记", "记录", "复盘", "输出", "写"],
+            work: ["工作", "项目", "代码", "编程", "练习", "刷题", "任务", "备考"],
+            wakeup: ["早起", "起床", "晨起", "早睡早起"]
+        };
 
-        // --- 水彩树绘制 ---
-        function WatercolorTree({ dayIndex, completedCount }) {
+        const moodKeywords = {
+            healing: ["平静", "疗愈", "温柔", "情绪", "松弛", "治愈", "放松"],
+            discipline: ["自律", "坚持", "长期", "习惯", "规律", "稳定"],
+            breakthrough: ["突破", "成长", "改变", "提升", "进步", "更强"],
+            focus: ["专注", "注意力", "深度", "聚焦", "投入"],
+            confidence: ["自信", "底气", "勇敢", "证明", "信心"]
+        };
+
+        const inferTaskType = (taskName = "") => {
+            const normalized = normalizeText(taskName);
+            const match = Object.entries(taskKeywords).find(([, words]) =>
+                words.some((word) => normalized.includes(normalizeText(word)))
+            );
+            return match ? match[0] : "mixed";
+        };
+
+        const inferMoodType = (text = "") => {
+            const normalized = normalizeText(text);
+            const match = Object.entries(moodKeywords).find(([, words]) =>
+                words.some((word) => normalized.includes(normalizeText(word)))
+            );
+            return match ? match[0] : "mixed";
+        };
+
+        const quoteLibrary = [
+            { id: "q1", quote: "所谓无底深渊，下去，也是前程万里。", author: "木心", tags: ["长期主义", "勇气", "坚持"] },
+            { id: "q2", quote: "生活不能等待别人来安排，要自己去争取与奋斗。", author: "路遥", tags: ["奋斗", "主动", "成长"] },
+            { id: "q3", quote: "每一个不曾起舞的日子，都是对生命的辜负。", author: "尼采", tags: ["行动", "成长", "生命力"] },
+            { id: "q4", quote: "要有最朴素的生活，与最遥远的梦想。", author: "海子", tags: ["梦想", "坚持", "长期主义"] },
+            { id: "q5", quote: "世界以痛吻我，要我报之以歌。", author: "泰戈尔", tags: ["疗愈", "希望", "韧性"] },
+            { id: "q6", quote: "我们都生活在阴沟里，但仍有人仰望星空。", author: "王尔德", tags: ["希望", "理想", "长期主义"] },
+            { id: "q7", quote: "唯有行动才能解除所有的不安。", author: "歌德", tags: ["行动", "自律", "专注"] },
+            { id: "q8", quote: "天行健，君子以自强不息。", author: "《周易》", tags: ["自律", "坚持", "成长"] },
+            { id: "q9", quote: "路虽远，行则将至。", author: "《荀子》", tags: ["长期主义", "坚持", "行动"] },
+            { id: "q10", quote: "千里之行，始于足下。", author: "老子", tags: ["开始", "行动", "积累"] },
+            { id: "q11", quote: "真正的强者，不是没有眼泪的人，而是含着眼泪奔跑的人。", author: "拿破仑", tags: ["勇气", "坚持", "韧性"] },
+            { id: "q12", quote: "一个人知道自己为什么而活，就可以忍受任何一种生活。", author: "尼采", tags: ["初心", "意义", "意志"] }
+        ];
+
+        const quoteTagMap = {
+            meditation: ["疗愈", "希望", "理想"],
+            reading: ["成长", "积累", "长期主义"],
+            fitness: ["坚持", "勇气", "行动"],
+            writing: ["初心", "成长", "意义"],
+            work: ["行动", "专注", "坚持"],
+            wakeup: ["自律", "开始", "行动"],
+            mixed: ["成长", "长期主义", "坚持"]
+        };
+
+        const moodTagMap = {
+            healing: ["疗愈", "希望", "理想"],
+            discipline: ["长期主义", "坚持", "自律"],
+            breakthrough: ["成长", "勇气", "行动"],
+            focus: ["专注", "行动", "积累"],
+            confidence: ["勇气", "意志", "成长"],
+            mixed: ["成长", "长期主义", "坚持"]
+        };
+
+        const getDailyQuote = (cycleId, dayIndex, tasks, sessionKey = Date.now()) => {
+            const cacheKey = `${cycleId}_day_${dayIndex}`;
+            const historyMap = getCacheMap(QUOTE_HISTORY_KEY);
+            const history = historyMap[cacheKey] || { usedIds: [], pointer: 0 };
+            const desiredTags = new Set();
+
+            tasks.forEach((task) => {
+                (quoteTagMap[inferTaskType(task.name)] || quoteTagMap.mixed).forEach((tag) => desiredTags.add(tag));
+                (moodTagMap[inferMoodType(task.intention)] || moodTagMap.mixed).forEach((tag) => desiredTags.add(tag));
+            });
+
+            const preferred = quoteLibrary.filter((item) => item.tags.some((tag) => desiredTags.has(tag)));
+            const candidates = preferred.length ? preferred : quoteLibrary;
+            const unused = candidates.filter((item) => !history.usedIds.includes(item.id));
+            const pool = unused.length ? unused : candidates;
+            const selected = pool[simpleHash(`${cacheKey}_${sessionKey}_${history.pointer}`) % pool.length];
+
+            historyMap[cacheKey] = {
+                usedIds: [...history.usedIds.filter((id) => id !== selected.id), selected.id],
+                pointer: history.pointer + 1
+            };
+            saveToLocal(QUOTE_HISTORY_KEY, historyMap);
+            return `“${selected.quote}”——${selected.author}`;
+        };
+
+        const shortWhisperLibrary = {
+            meditation: ["心慢慢静下来了。", "这一刻很安静。", "杂念被你放轻了。", "你把心放稳了。"],
+            reading: ["这一页，正替你蓄光。", "文字正在体内生根。", "你又向内走近了些。", "这份输入会发芽。"],
+            fitness: ["身体记住了这次发力。", "汗水落下，状态升起。", "能量被你叫醒了。", "这份力度，很漂亮。"],
+            writing: ["思绪慢慢落地了。", "你把自己写清楚了。", "今天被你写得更明白了。", "纸上落下了秩序感。"],
+            work: ["这一格，做得踏实。", "进度被你稳稳推前了。", "这一步，不响，却很稳。", "事情被你好好安放了。"],
+            wakeup: ["这一天，被你先接住了。", "清晨被你好好接住了。", "你先于困意起身了。", "今天，从你起身开始亮。"],
+            healing: ["你没有忘记照顾自己。", "你把自己轻轻领回来了。", "慢一点，也是在靠近。"],
+            discipline: ["坚持，正在暗暗生长。", "你又认真活出了一小段。", "这一笔，会慢慢改写自己。"],
+            breakthrough: ["你今天没有向后退。", "这一点前进，刚刚好重要。", "真正的突破，总是静静发生。"],
+            focus: ["心意回来了，路也清了。", "散开的力气，被你收回来了。", "专注落下的地方，正在生长。"],
+            mixed: ["这一小步，已经算数了。", "你认真完成它的样子，很好看。", "未来又多了一点底气。", "这份坚持很有重量。"]
+        };
+
+        const buildWhisperPool = (taskType, mood) => {
+            const taskPool = (shortWhisperLibrary[taskType] || []).map((text, index) => ({
+                id: `task_${taskType}_${index}`,
+                text
+            }));
+            const moodPool = (shortWhisperLibrary[mood] || []).map((text, index) => ({
+                id: `mood_${mood}_${index}`,
+                text
+            }));
+            const mixedPool = (shortWhisperLibrary.mixed || []).map((text, index) => ({
+                id: `mixed_${index}`,
+                text
+            }));
+            return uniqueById([...taskPool, ...moodPool, ...mixedPool]);
+        };
+
+        const getTaskWhisper = (cycleId, dayIndex, task, intention, context = {}) => {
+            const taskKey = `${cycleId}_${task.id || task.name}`;
+            const historyMap = getCacheMap(WHISPER_HISTORY_KEY);
+            const history = historyMap[taskKey] || [];
+            const existing = history.find((item) => item.dayIndex === dayIndex);
+            if (existing) return existing.text;
+
+            const taskType = inferTaskType(task.name);
+            const mood = inferMoodType(intention);
+            const pool = buildWhisperPool(taskType, mood);
+            const recent7Ids = history.slice(-7).map((item) => item.id);
+            const usedCycleIds = history.map((item) => item.id);
+
+            let candidates = pool.filter((item) => !recent7Ids.includes(item.id));
+            if (!candidates.length) candidates = pool;
+            const lessUsed = candidates.filter((item) => !usedCycleIds.includes(item.id));
+            if (lessUsed.length) candidates = lessUsed;
+
+            const selected = candidates[simpleHash(`${taskKey}_${dayIndex}_${task.name}_${history.length}`) % candidates.length];
+            let text = selected.text;
+            if (context.minutes >= 60) {
+                text = `${text.replace(/[。！]$/, "")}，而且走得很扎实。`;
+            } else if (context.completedCount === 3) {
+                text = `${text.replace(/[。！]$/, "")}，也让今天更完整了。`;
+            }
+
+            historyMap[taskKey] = [...history, { dayIndex, id: selected.id, text }].slice(-30);
+            saveToLocal(WHISPER_HISTORY_KEY, historyMap);
+            return text;
+        };
+
+        const encouragementLibrary = {
+            healing: [
+                "今天的三束微光都亮了。愿你带着这份安静，温柔地走进夜晚。",
+                "你没有辜负今天，也没有辜负自己。请安心收下这份圆满。",
+                "这一天被你好好照顾过了，今晚可以放心休息。"
+            ],
+            discipline: [
+                "今天不是因为完美而圆满，而是因为你没有放弃。",
+                "你把普通的一天，过成了值得记住的一天。",
+                "这份坚持已经落地，明天会从这里继续生长。"
+            ],
+            breakthrough: [
+                "你又向更想成为的自己靠近了一点，而且是扎实的一点。",
+                "今天的完成不喧哗，却足够有力量。",
+                "请收下这份圆满，它会慢慢长成你的底气。"
+            ],
+            focus: [
+                "三件事都被你好好安放，今天因此有了清晰的轮廓。",
+                "你把注意力稳稳放回了重要的事上，这很珍贵。",
+                "今天的节奏被你守住了，夜色也会因此柔和一些。"
+            ],
+            mixed: [
+                "今天的三束微光都亮了。愿你带着这份丰盛，安静地进入夜晚。",
+                "森林记下了你的认真，今晚请允许自己轻轻庆祝一下。",
+                "一天结束时还能这样稳稳站着，已经很了不起了。"
+            ]
+        };
+
+        const getFullDayEncouragement = (cycleId, dayIndex, tasks, times) => {
+            const cacheKey = `${cycleId}_day_${dayIndex}`;
+            const cache = getCacheMap(ENCOURAGEMENT_CACHE_KEY);
+            if (cache[cacheKey]) return cache[cacheKey];
+
+            const mood = inferMoodType(tasks.map((task) => task.intention).join(" "));
+            const totalMinutes = times.reduce((sum, value) => sum + Number(value || 0), 0);
+            const pool = encouragementLibrary[mood] || encouragementLibrary.mixed;
+            let text = pool[simpleHash(`${cacheKey}_${totalMinutes}`) % pool.length];
+            if (totalMinutes >= 120) {
+                text += " 今天的投入尤其丰盛，连树影都更深了一层。";
+            }
+            return setCacheValue(ENCOURAGEMENT_CACHE_KEY, cacheKey, text);
+        };
+
+        const reportOpenings = [
+            "这 30 天不是一场冲刺，而是一段你亲手完成的生长。",
+            "你给自己的承诺，已经被一天一天地写成了现实。",
+            "树不会在一夜之间茂盛，但会在持续里长出形状。"
+        ];
+
+        const reportClosings = [
+            "请记住，你拥有重新开始的能力，也拥有继续坚持的资格。",
+            "下一段旅程不必更激烈，只要继续真实、稳定地向前。",
+            "愿这份积累留在你身上，成为以后每一次出发的底气。"
+        ];
+
+        const extractKeywords = (journalTexts) => {
+            const blacklist = ["自己", "今天", "已经", "因为", "所以", "然后", "继续", "感觉", "我们", "你们", "他们"];
+            const counter = {};
+            journalTexts
+                .join("")
+                .replace(/[，。！？；：“”‘’、\n\r\s]/g, " ")
+                .split(" ")
+                .filter((item) => item.length >= 2)
+                .forEach((word) => {
+                    if (blacklist.includes(word)) return;
+                    counter[word] = (counter[word] || 0) + 1;
+                });
+
+            return Object.entries(counter)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 6)
+                .map(([word]) => word);
+        };
+
+        const getFinalReport = (cycleId, userData, dailyRecords) => {
+            const cacheKey = String(cycleId);
+            const cache = getCacheMap(REPORT_CACHE_KEY);
+            const relevantRecords = Object.entries(dailyRecords)
+                .filter(([key]) => key.startsWith(`${cycleId}_day_`))
+                .map(([, value]) => value);
+
+            if (!relevantRecords.length && cache[cacheKey]) {
+                return cache[cacheKey];
+            }
+
+            const totalPossibleTasks = 30 * userData.tasks.length;
+            const totalCompletedTasks = relevantRecords.reduce(
+                (sum, record) => sum + record.tasks.filter(Boolean).length,
+                0
+            );
+            const completionRate = totalPossibleTasks
+                ? Math.round((totalCompletedTasks / totalPossibleTasks) * 100)
+                : 0;
+            const totalMinutes = relevantRecords.reduce(
+                (sum, record) => sum + record.times.reduce((inner, value) => inner + Number(value || 0), 0),
+                0
+            );
+            const perTaskStats = userData.tasks.map((task, index) => {
+                const completedDays = relevantRecords.filter((record) => record.tasks[index]).length;
+                const totalTaskMinutes = relevantRecords.reduce(
+                    (sum, record) => sum + Number(record.times[index] || 0),
+                    0
+                );
+                return {
+                    id: task.id,
+                    name: task.name,
+                    intention: task.intention,
+                    completedDays,
+                    totalMinutes: totalTaskMinutes
+                };
+            });
+
+            const strongestTask = [...perTaskStats].sort((a, b) => b.completedDays - a.completedDays)[0] || null;
+            const growthTask = [...perTaskStats].sort((a, b) => b.totalMinutes - a.totalMinutes)[0] || null;
+            const journals = relevantRecords.map((record) => record.journal).filter(Boolean);
+            const keywords = extractKeywords(journals);
+            const mood = inferMoodType(userData.tasks.map((task) => task.intention).join(" "));
+            const opening = reportOpenings[simpleHash(`${cycleId}_opening`) % reportOpenings.length];
+            const closing = reportClosings[simpleHash(`${cycleId}_closing`) % reportClosings.length];
+
+            let summary = `${opening} 你完成了 ${completionRate}% 的约定，总共投入 ${totalMinutes} 分钟。`;
+            if (strongestTask) {
+                summary += ` 最稳定的习惯是“${strongestTask.name}”，它一共被你完成了 ${strongestTask.completedDays} 天。`;
+            }
+            if (growthTask && growthTask.name !== strongestTask?.name) {
+                summary += ` 投入时间最多的是“${growthTask.name}”，你在它身上放了 ${growthTask.totalMinutes} 分钟。`;
+            }
+            if (mood === "healing") summary += " 这段旅程最动人的地方，不是你有多猛烈，而是你始终愿意照顾自己。";
+            if (mood === "discipline") summary += " 你把“坚持”从一个抽象的词，慢慢过成了每天都能看见的样子。";
+            if (mood === "breakthrough") summary += " 你没有停在期待改变，而是真的让自己一点点发生了改变。";
+            if (mood === "focus") summary += " 你练出的，不只是完成任务的能力，还有把注意力带回当下的能力。";
+            if (mood === "mixed") summary += " 你在波动里继续前进，这份稳定本身就值得被郑重记录。";
+            summary += ` ${closing}`;
+
+            const result = {
+                completionRate,
+                totalMinutes,
+                totalCompletedTasks,
+                perTaskStats,
+                strongestTask,
+                growthTask,
+                keywords,
+                summary
+            };
+            return setCacheValue(REPORT_CACHE_KEY, cacheKey, result);
+        };
+
+        const CelebrationPetals = ({ count = 8 }) => (
+            <div className="absolute inset-0 pointer-events-none overflow-hidden">
+                {Array.from({ length: count }).map((_, index) => (
+                    <span
+                        key={index}
+                        className="petal"
+                        style={{
+                            left: `${8 + index * 8}%`,
+                            animationDelay: `${index * 0.12}s`,
+                            "--drift": `${-28 + index * 9}px`
+                        }}
+                    />
+                ))}
+            </div>
+        );
+
+        function WatercolorTree({ dayIndex, completedCount, isDailyFull }) {
             const canvasRef = useRef(null);
+
             useEffect(() => {
                 const canvas = canvasRef.current;
                 if (!canvas) return;
-                const ctx = canvas.getContext('2d');
-                const dpr = window.devicePixelRatio || 1;
-                const w = canvas.clientWidth, h = canvas.clientHeight;
-                canvas.width = w * dpr; canvas.height = h * dpr;
-                ctx.scale(dpr, dpr);
 
-                const drawTree = (x, y, angle, len, branchWidth, color, depth) => {
-                    ctx.beginPath(); ctx.save();
-                    ctx.strokeStyle = color; ctx.lineWidth = branchWidth; ctx.lineCap = 'round';
-                    ctx.translate(x, y); ctx.rotate(angle * Math.PI / 180);
-                    ctx.moveTo(0, 0); ctx.lineTo(0, -len); ctx.stroke();
+                const ctx = canvas.getContext("2d");
+                const dpr = window.devicePixelRatio || 1;
+                const width = canvas.clientWidth;
+                const height = canvas.clientHeight;
+                canvas.width = width * dpr;
+                canvas.height = height * dpr;
+                ctx.scale(dpr, dpr);
+                ctx.clearRect(0, 0, width, height);
+
+                if (isDailyFull) {
+                    const halo = ctx.createRadialGradient(width / 2, height / 2, 10, width / 2, height / 2, 120);
+                    halo.addColorStop(0, "rgba(235, 199, 209, 0.32)");
+                    halo.addColorStop(1, "rgba(235, 199, 209, 0)");
+                    ctx.fillStyle = halo;
+                    ctx.beginPath();
+                    ctx.arc(width / 2, height / 2, 120, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                const drawTree = (x, y, angle, len, branchWidth, depth) => {
+                    ctx.save();
+                    ctx.translate(x, y);
+                    ctx.rotate((angle * Math.PI) / 180);
+                    ctx.beginPath();
+                    ctx.strokeStyle = depth <= 1 && isDailyFull ? "#7CA46A" : "#6B705C";
+                    ctx.lineWidth = branchWidth;
+                    ctx.lineCap = "round";
+                    ctx.moveTo(0, 0);
+                    ctx.lineTo(0, -len);
+                    ctx.stroke();
+
                     if (depth === 0) {
-                        ctx.fillStyle = `rgba(${74 + dayIndex * 4}, ${129 - dayIndex}, ${74}, ${0.4 + (completedCount / 6)})`;
-                        for (let i = 0; i < 3; i++) {
+                        const leafColor = isDailyFull
+                            ? "rgba(119, 181, 98, 0.72)"
+                            : `rgba(${90 + dayIndex * 3}, ${138 + completedCount * 6}, 102, 0.52)`;
+                        ctx.fillStyle = leafColor;
+                        for (let i = 0; i < 3; i += 1) {
                             ctx.beginPath();
-                            ctx.ellipse(0, -len, 5 + Math.random() * 5, 8 + Math.random() * 8, Math.random() * Math.PI, 0, Math.PI * 2);
+                            ctx.ellipse(
+                                (Math.random() - 0.5) * 8,
+                                -len + (Math.random() - 0.5) * 4,
+                                6 + Math.random() * 5,
+                                10 + Math.random() * 6,
+                                Math.random() * Math.PI,
+                                0,
+                                Math.PI * 2
+                            );
                             ctx.fill();
                         }
-                        ctx.restore(); return;
+
+                        if (isDailyFull) {
+                            ctx.fillStyle = "rgba(235, 199, 209, 0.92)";
+                            for (let i = 0; i < 2; i += 1) {
+                                ctx.beginPath();
+                                ctx.arc(
+                                    (Math.random() - 0.5) * 10,
+                                    -len + (Math.random() - 0.5) * 8,
+                                    2.4,
+                                    0,
+                                    Math.PI * 2
+                                );
+                                ctx.fill();
+                            }
+                        }
+                        ctx.restore();
+                        return;
                     }
-                    const maxDepth = Math.min(depth, Math.floor(dayIndex / 5) + 2);
-                    if (maxDepth > 0) {
-                        drawTree(0, -len, angle - (15 + Math.random() * 15), len * 0.75, branchWidth * 0.7, color, depth - 1);
-                        drawTree(0, -len, angle + (15 + Math.random() * 15), len * 0.75, branchWidth * 0.7, color, depth - 1);
-                    }
+
+                    drawTree(0, -len, angle - (15 + Math.random() * 10), len * 0.76, branchWidth * 0.72, depth - 1);
+                    drawTree(0, -len, angle + (15 + Math.random() * 10), len * 0.76, branchWidth * 0.72, depth - 1);
                     ctx.restore();
                 };
-                ctx.clearRect(0, 0, w, h);
-                drawTree(w / 2, h - 20, 0, Math.min(20 + dayIndex * 2, 80), Math.min(2 + dayIndex / 4, 10), '#6B705C', 5);
-                if (dayIndex >= 25) {
-                    ctx.fillStyle = "rgba(255, 182, 193, 0.6)";
-                    for (let i = 0; i < 15; i++) {
-                        ctx.beginPath(); ctx.arc(w/2 + (Math.random()-0.5)*100, h/2 + (Math.random()-0.5)*100, 3, 0, Math.PI*2); ctx.fill();
-                    }
-                }
-            }, [dayIndex, completedCount]);
-            return <canvas ref={canvasRef} className="w-full h-64 md:h-80" />;
+
+                drawTree(width / 2, height - 22, 0, Math.min(28 + dayIndex * 1.9, 84), Math.min(4 + dayIndex / 8, 10), 5);
+            }, [dayIndex, completedCount, isDailyFull]);
+
+            return (
+                <div className="relative">
+                    {isDailyFull && (
+                        <div className="tree-halo absolute inset-0 rounded-full bg-[radial-gradient(circle,rgba(235,199,209,0.32)_0%,rgba(235,199,209,0)_72%)]" />
+                    )}
+                    <canvas ref={canvasRef} className="w-full h-64 md:h-80 relative z-10" />
+                </div>
+            );
         }
 
-        // --- 主应用 ---
         function App() {
-            const [view, setView] = useState('loading'); 
+            const [view, setView] = useState("loading");
             const [userData, setUserData] = useState(null);
             const [dailyRecords, setDailyRecords] = useState({});
             const [archivedCycles, setArchivedCycles] = useState([]);
             const [currentDayIndex, setCurrentDayIndex] = useState(0);
-            const [modalContent, setModalContent] = useState(null);
+            const [modalContent, setModalContent] = useState("");
 
             useEffect(() => {
-                const savedUser = getFromLocal('user_config');
-                const savedRecords = getFromLocal('daily_records') || {};
-                const savedArchives = getFromLocal('archived_cycles') || [];
+                const savedUser = getFromLocal("user_config", null);
+                const savedRecords = getFromLocal("daily_records", {});
+                const savedArchives = getFromLocal("archived_cycles", []);
+
                 setDailyRecords(savedRecords);
                 setArchivedCycles(savedArchives);
-                if (savedUser) {
-                    setUserData(savedUser);
-                    const start = new Date(savedUser.startDate); start.setHours(0,0,0,0);
-                    const now = new Date(); now.setHours(0,0,0,0);
-                    const diff = Math.floor((now.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
-                    if (diff >= 30) setView('report');
-                    else { setCurrentDayIndex(diff >= 0 ? diff : 0); setView('main'); }
-                } else setView('prelude');
+
+                if (!savedUser) {
+                    setView("prelude");
+                    return;
+                }
+
+                const sanitizedUser = {
+                    ...savedUser,
+                    tasks: (savedUser.tasks || []).map((task, index) => ({
+                        id: task.id || index + 1,
+                        name: task.name || "",
+                        intention: task.intention || ""
+                    }))
+                };
+                delete sanitizedUser.apiKey;
+
+                setUserData(sanitizedUser);
+
+                const start = startOfDay(sanitizedUser.startDate);
+                const today = startOfDay(new Date());
+                const diff = Math.floor((today.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+                if (diff >= 30) {
+                    setView("report");
+                } else {
+                    setCurrentDayIndex(Math.max(diff, 0));
+                    setView("main");
+                }
             }, []);
 
-            useEffect(() => { if (userData) saveToLocal('user_config', userData); }, [userData]);
-            useEffect(() => { if (Object.keys(dailyRecords).length > 0) saveToLocal('daily_records', dailyRecords); }, [dailyRecords]);
-            useEffect(() => { saveToLocal('archived_cycles', archivedCycles); }, [archivedCycles]);
+            useEffect(() => {
+                if (userData) saveToLocal("user_config", userData);
+            }, [userData]);
+
+            useEffect(() => {
+                saveToLocal("daily_records", dailyRecords);
+            }, [dailyRecords]);
+
+            useEffect(() => {
+                saveToLocal("archived_cycles", archivedCycles);
+            }, [archivedCycles]);
 
             const handleNewJourney = () => {
-                const archiveEntry = { config: userData, records: dailyRecords, archivedAt: new Date().toISOString() };
-                setArchivedCycles(prev => [archiveEntry, ...prev]);
+                const archiveEntry = {
+                    config: userData,
+                    records: Object.fromEntries(
+                        Object.entries(dailyRecords).filter(([key]) => key.startsWith(`${userData.cycleId}_day_`))
+                    ),
+                    archivedAt: new Date().toISOString()
+                };
+                setArchivedCycles((prev) => [archiveEntry, ...prev]);
                 setUserData(null);
-                saveToLocal('user_config', null);
-                setView('prelude');
+                setCurrentDayIndex(0);
+                setView("prelude");
+                saveToLocal("user_config", null);
             };
 
-            if (view === 'loading') return <div className="min-h-screen flex items-center justify-center text-[#A3B18A] font-serif tracking-widest">正在唤醒森林...</div>;
+            if (view === "loading") {
+                return (
+                    <div className="min-h-screen flex items-center justify-center text-[#A3B18A] font-serif tracking-widest">
+                        正在唤醒森林...
+                    </div>
+                );
+            }
 
             return (
-                <div className="min-h-screen bg-[#FDFCF8] text-[#4A4A4A]">
-                    {view === 'prelude' && <Prelude onComplete={() => setView('contract')} />}
-                    {view === 'contract' && <ContractSetup onSign={(data) => { 
-                        const config = { ...data, cycleId: Date.now(), startDate: new Date().toISOString() };
-                        setUserData(config); setView('main'); 
-                    }} />}
-                    {view === 'main' && (
-                        <MainDashboard 
-                            userData={userData} setUserData={setUserData}
-                            dailyRecords={dailyRecords} setDailyRecords={setDailyRecords}
+                <div className="min-h-screen text-[#4A4A4A]">
+                    {view === "prelude" && <Prelude onComplete={() => setView("purpose")} />}
+                    {view === "purpose" && <PurposeIntro onComplete={() => setView("contract")} />}
+                    {view === "contract" && (
+                        <ContractSetup
+                            onSign={(data) => {
+                                const config = {
+                                    ...data,
+                                    cycleId: Date.now(),
+                                    startDate: new Date().toISOString()
+                                };
+                                setUserData(config);
+                                setCurrentDayIndex(0);
+                                setView("main");
+                            }}
+                        />
+                    )}
+                    {view === "main" && userData && (
+                        <MainDashboard
+                            userData={userData}
+                            dailyRecords={dailyRecords}
+                            setDailyRecords={setDailyRecords}
                             currentDay={currentDayIndex}
-                            onOpenHistory={() => setView('history')}
+                            onOpenHistory={() => setView("history")}
                             setModalContent={setModalContent}
                         />
                     )}
-                    {view === 'history' && <HistoryView archivedCycles={archivedCycles} dailyRecords={dailyRecords} userData={userData} onBack={() => setView('main')} />}
-                    {view === 'report' && <FinalReport userData={userData} dailyRecords={dailyRecords} onReset={handleNewJourney} />}
+                    {view === "history" && userData && (
+                        <HistoryView
+                            archivedCycles={archivedCycles}
+                            dailyRecords={dailyRecords}
+                            userData={userData}
+                            onBack={() => setView("main")}
+                        />
+                    )}
+                    {view === "report" && userData && (
+                        <FinalReport
+                            userData={userData}
+                            dailyRecords={dailyRecords}
+                            onReset={handleNewJourney}
+                        />
+                    )}
 
                     {modalContent && (
                         <div className="fixed inset-0 z-[150] flex items-center justify-center p-6 backdrop-blur-sm">
-                            <div className="absolute inset-0 bg-[#344E41]/30 transition-opacity" onClick={() => setModalContent(null)} />
-                            <div className="bg-white/95 p-8 rounded-[2.5rem] max-w-lg w-full shadow-2xl border border-[#E2E8CE] relative animate-in zoom-in-95 duration-300">
-                                <button onClick={() => setModalContent(null)} className="absolute top-6 right-6 p-2 text-[#A3B18A] hover:text-[#344E41] transition-colors"><Icon name="x" size={24} /></button>
-                                <div className="flex flex-col items-center text-center space-y-6 pt-4">
-                                    <div className="p-4 bg-[#F2F4ED] rounded-full"><Icon name="award" size={48} className="text-[#588157]" /></div>
+                            <div className="absolute inset-0 bg-[#344E41]/30" onClick={() => setModalContent("")} />
+                            <div className="bg-white/95 p-8 rounded-[2.5rem] max-w-lg w-full shadow-2xl border border-[#E2E8CE] relative overflow-hidden animate-fade-rise">
+                                <CelebrationPetals count={12} />
+                                <button
+                                    onClick={() => setModalContent("")}
+                                    className="absolute top-6 right-6 p-2 text-[#A3B18A] hover:text-[#344E41] transition-colors z-10"
+                                >
+                                    <Icon name="x" size={24} />
+                                </button>
+                                <div className="flex flex-col items-center text-center space-y-6 pt-4 relative z-10">
+                                    <div className="p-4 bg-[#F2F4ED] rounded-full">
+                                        <Icon name="award" size={48} className="text-[#588157]" />
+                                    </div>
                                     <p className="text-base leading-relaxed italic text-[#588157] px-4">“{modalContent}”</p>
-                                    <button onClick={() => setModalContent(null)} className="w-full py-4 bg-[#588157] text-white rounded-2xl font-bold tracking-widest shadow-lg hover:bg-[#344E41] transition-all">收下这份温暖</button>
+                                    <button
+                                        onClick={() => setModalContent("")}
+                                        className="w-full py-4 bg-[#588157] text-white rounded-2xl font-bold tracking-widest shadow-lg hover:bg-[#344E41] transition-all"
+                                    >
+                                        收下这份温暖
+                                    </button>
                                 </div>
                             </div>
                         </div>
@@ -242,63 +774,138 @@
             );
         }
 
-        // --- 序幕 ---
         function Prelude({ onComplete }) {
             const [text, setText] = useState("");
             const [isFinished, setIsFinished] = useState(false);
-            const fullText = "致长期主义者：\n\n在这个碎片化的时代，安静的成长是一种奢侈。\nSelfGrow 不是为了监督，而是为了陪你种下一棵属于自己的树。我们接纳你的波动，只要你还在坚守。\n\n—— 欢迎来到你的森林";
+            const fullText =
+                "致长期主义者：\n\n在这个碎片化的时代，安静的成长是一种奢侈。\nSelfGrow 不是为了监督，而是为了陪你种下一棵属于自己的树。我们接纳你的波动，只要你还在坚守。\n\n—— 欢迎来到你的森林";
+
             useEffect(() => {
-                let i = 0;
+                let index = 0;
                 const interval = setInterval(() => {
-                    setText(fullText.slice(0, i)); i++;
-                    if (i > fullText.length) { clearInterval(interval); setIsFinished(true); }
-                }, 60);
+                    setText(fullText.slice(0, index));
+                    index += 1;
+                    if (index > fullText.length) {
+                        clearInterval(interval);
+                        setIsFinished(true);
+                    }
+                }, 58);
                 return () => clearInterval(interval);
             }, []);
+
             return (
                 <div className="flex flex-col items-center justify-center min-h-screen px-10 text-center font-serif">
-                    <div className="max-w-prose whitespace-pre-wrap text-xl md:text-2xl leading-relaxed text-[#6B705C]">{text}</div>
+                    <div className="max-w-prose whitespace-pre-wrap text-xl md:text-2xl leading-relaxed text-[#6B705C]">
+                        {text}
+                    </div>
                     {isFinished && (
-                        <button onClick={onComplete} className="mt-12 px-10 py-4 bg-[#588157] text-white rounded-2xl hover:bg-[#344E41] transition-all font-bold tracking-widest shadow-lg flex items-center gap-2 animate-in fade-in duration-1000">
-                            开启成长计划 <Icon name="chevron-right" size={20} />
+                        <button
+                            onClick={onComplete}
+                            className="mt-12 px-10 py-4 bg-[#588157] text-white rounded-2xl hover:bg-[#344E41] transition-all font-bold tracking-widest shadow-lg flex items-center gap-2"
+                        >
+                            继续向前 <Icon name="chevron-right" size={20} />
                         </button>
                     )}
                 </div>
             );
         }
 
-        // --- 签署契约 ---
+        function PurposeIntro({ onComplete }) {
+            const [text, setText] = useState("");
+            const [isFinished, setIsFinished] = useState(false);
+            const fullText =
+                "SelfGrow 是一个陪你完成 30 天习惯养成的小小森林。\n\n在这里，你会为接下来的 30 天设定三件想认真坚持的小事；每天的任务完成情况、投入时长与感受，都会被安静记录下来。\n\n当你走到第 30 天，SelfGrow 会把这些点滴整理成一份成长回响，让你重新看见自己一路坚持下来的样子。";
+
+            useEffect(() => {
+                let index = 0;
+                const interval = setInterval(() => {
+                    setText(fullText.slice(0, index));
+                    index += 1;
+                    if (index > fullText.length) {
+                        clearInterval(interval);
+                        setIsFinished(true);
+                    }
+                }, 56);
+                return () => clearInterval(interval);
+            }, []);
+
+            return (
+                <div className="flex flex-col items-center justify-center min-h-screen px-10 text-center font-serif">
+                    <div className="max-w-prose whitespace-pre-wrap text-lg md:text-2xl leading-relaxed text-[#6B705C]">
+                        {text}
+                    </div>
+                    {isFinished && (
+                        <button
+                            onClick={onComplete}
+                            className="mt-12 px-10 py-4 bg-[#588157] text-white rounded-2xl hover:bg-[#344E41] transition-all font-bold tracking-widest shadow-lg flex items-center gap-2"
+                        >
+                            去签署契约 <Icon name="feather" size={18} />
+                        </button>
+                    )}
+                </div>
+            );
+        }
+
         function ContractSetup({ onSign }) {
             const [form, setForm] = useState({
-                tasks: [{ id: 1, name: "", intention: "" }, { id: 2, name: "", intention: "" }, { id: 3, name: "", intention: "" }],
-                apiKey: ""
+                tasks: [
+                    { id: 1, name: "", intention: "" },
+                    { id: 2, name: "", intention: "" },
+                    { id: 3, name: "", intention: "" }
+                ]
             });
-            const isComplete = form.tasks.every(t => t.name && t.intention);
+
+            const isComplete = form.tasks.every((task) => task.name.trim() && task.intention.trim());
+
             return (
-                <div className="max-w-2xl mx-auto py-20 px-6 min-h-screen flex flex-col justify-center animate-in fade-in duration-700">
+                <div className="max-w-2xl mx-auto py-20 px-6 min-h-screen flex flex-col justify-center">
                     <div className="mb-12 text-center">
                         <h2 className="text-3xl font-serif text-[#344E41] mb-2">签署新的成长契约</h2>
-                        <p className="text-[#A3B18A]">设定你的成长支点，开启 30 天的坚守。</p>
+                        <p className="text-[#A3B18A]">
+                            从今天开始，任务完成情况、时长与感受都会被妥帖记录下来。30 天后，你会看到一份属于自己的成长回响。
+                        </p>
                     </div>
-                    <div className="space-y-8 bg-white/50 p-8 rounded-3xl border border-[#E2E8CE]">
-                        {form.tasks.map((task, idx) => (
-                            <div key={idx} className="space-y-3">
+
+                    <div className="space-y-8 bg-white/60 p-8 rounded-3xl border border-[#E2E8CE] shadow-[0_18px_50px_rgba(88,129,87,0.08)]">
+                        {form.tasks.map((task, index) => (
+                            <div key={task.id} className="space-y-3">
                                 <div className="flex items-center gap-3">
-                                    <span className="w-8 h-8 rounded-full bg-[#DAD7CD] flex items-center justify-center text-[#588157] font-bold shrink-0">{idx + 1}</span>
-                                    <input placeholder="想要养成的习惯 (如：晨间冥想)" className="flex-1 bg-transparent border-b border-[#DAD7CD] py-2 outline-none focus:border-[#A3B18A] transition-all" 
-                                           value={task.name} onChange={e => { const nt = [...form.tasks]; nt[idx].name = e.target.value; setForm({...form, tasks: nt}); }} />
+                                    <span className="w-8 h-8 rounded-full bg-[#DAD7CD] flex items-center justify-center text-[#588157] font-bold shrink-0">
+                                        {index + 1}
+                                    </span>
+                                    <input
+                                        placeholder="想要养成的习惯（如：晨间冥想）"
+                                        className="flex-1 bg-transparent border-b border-[#DAD7CD] py-2 outline-none focus:border-[#A3B18A] transition-all"
+                                        value={task.name}
+                                        onChange={(event) => {
+                                            const nextTasks = [...form.tasks];
+                                            nextTasks[index].name = event.target.value;
+                                            setForm({ ...form, tasks: nextTasks });
+                                        }}
+                                    />
                                 </div>
-                                <input placeholder="你的初心 (为什么要坚持这件事?)" className="w-full bg-transparent border-b border-[#DAD7CD] py-1 pl-11 text-sm text-[#6B705C] italic outline-none focus:border-[#A3B18A] transition-all"
-                                       value={task.intention} onChange={e => { const nt = [...form.tasks]; nt[idx].intention = e.target.value; setForm({...form, tasks: nt}); }} />
+                                <input
+                                    placeholder="你的初心（为什么想坚持这件事？）"
+                                    className="w-full bg-transparent border-b border-[#DAD7CD] py-1 pl-11 text-sm text-[#6B705C] italic outline-none focus:border-[#A3B18A] transition-all"
+                                    value={task.intention}
+                                    onChange={(event) => {
+                                        const nextTasks = [...form.tasks];
+                                        nextTasks[index].intention = event.target.value;
+                                        setForm({ ...form, tasks: nextTasks });
+                                    }}
+                                />
                             </div>
                         ))}
-                        <div className="pt-6 border-t border-[#E2E8CE]">
-                            <label className="block text-xs uppercase tracking-widest text-[#A3B18A] mb-2 font-bold">Gemini API Key (选填)</label>
-                            <input type="password" placeholder="填写 Key 以解锁 AI 共鸣互动" className="w-full bg-[#FDFCF8] rounded-xl px-4 py-3 border border-[#DAD7CD] outline-none focus:ring-1 focus:ring-[#A3B18A]"
-                                   value={form.apiKey} onChange={e => setForm({...form, apiKey: e.target.value})} />
-                        </div>
-                        <button disabled={!isComplete} onClick={() => onSign(form)}
-                                className={`w-full py-4 rounded-2xl font-bold tracking-widest transition-all ${isComplete ? 'bg-[#588157] text-white shadow-lg' : 'bg-[#DAD7CD] text-white cursor-not-allowed'}`}>
+
+                        <button
+                            disabled={!isComplete}
+                            onClick={() => onSign(form)}
+                            className={`w-full py-4 rounded-2xl font-bold tracking-widest transition-all ${
+                                isComplete
+                                    ? "bg-[#588157] text-white shadow-lg hover:bg-[#344E41]"
+                                    : "bg-[#DAD7CD] text-white cursor-not-allowed"
+                            }`}
+                        >
                             签署契约
                         </button>
                     </div>
@@ -306,105 +913,202 @@
             );
         }
 
-        // --- 主仪表盘 ---
-        function MainDashboard({ userData, setUserData, dailyRecords, currentDay, setDailyRecords, onOpenHistory, setModalContent }) {
-            const [quote, setQuote] = useState("成长的秘诀在于持续。 —— 佚名");
-            const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+        function MainDashboard({ userData, dailyRecords, setDailyRecords, currentDay, onOpenHistory, setModalContent }) {
             const todayKey = `${userData.cycleId}_day_${currentDay}`;
-            const todayRecord = dailyRecords[todayKey] || { tasks: [false, false, false], times: [0, 0, 0], journal: "", whispers: ["", "", ""], journalSubmitted: false, fullDayEncouraged: false };
-
-            const isDailyFull = todayRecord.tasks.every(t => t);
-
-            // 获取真实名言
-            useEffect(() => {
-                const fetchDailyQuote = async () => {
-                    const q = await fetchAI("请随机生成一句极具深意的中文名人名言，必须是真实存在的名人所说。格式必须为：名言内容 —— 名人姓名。严禁Markdown。", userData.apiKey);
-                    if (q) setQuote(q);
-                };
-                fetchDailyQuote();
-            }, [currentDay, userData.apiKey]);
-
-            // 全打卡自动弹窗
-            useEffect(() => {
-                if (isDailyFull && !todayRecord.fullDayEncouraged && userData.apiKey) {
-                    const getEncouragement = async () => {
-                        const feedback = await fetchAI("今日所有任务已圆满完成。请作为温柔的伙伴，给用户一段极其温柔、富有诗意的简短鼓励（80字以内），严禁Markdown。", userData.apiKey);
-                        if (feedback) {
-                            setModalContent(feedback);
-                            updateToday({ fullDayEncouraged: true });
-                        }
-                    };
-                    getEncouragement();
-                }
-            }, [isDailyFull, todayRecord.fullDayEncouraged]);
-
-            const updateToday = (updates) => setDailyRecords(prev => ({ ...prev, [todayKey]: { ...(prev[todayKey] || todayRecord), ...updates } }));
-
-            const handleToggle = async (idx) => {
-                if (todayRecord.tasks[idx]) return;
-                const nt = [...todayRecord.tasks]; nt[idx] = true;
-                
-                let whisper = "";
-                if (userData.apiKey) {
-                    // 深度贴合任务内容的反馈
-                    whisper = await fetchAI(`任务“${userData.tasks[idx].name}”已完成，初心是“${userData.tasks[idx].intention}”。请根据任务内容和初心写一句极简反馈（10字内），要有共鸣感，严禁Markdown。`, userData.apiKey);
-                }
-                
-                const nw = [...todayRecord.whispers]; nw[idx] = whisper;
-                updateToday({ tasks: nt, whispers: nw });
+            const todayRecord = dailyRecords[todayKey] || {
+                tasks: [false, false, false],
+                times: [0, 0, 0],
+                journal: "",
+                whispers: ["", "", ""],
+                journalSubmitted: false,
+                fullDayEncouraged: false,
+                dayEncouragement: ""
             };
 
-            const totalTime = useMemo(() => Object.entries(dailyRecords)
-                .filter(([k]) => k.startsWith(String(userData.cycleId)))
-                .reduce((acc, [, v]) => acc + (v.times?.reduce((a, b) => a + Number(b), 0) || 0), 0), [dailyRecords, userData.cycleId]);
+            const [quote, setQuote] = useState("");
+            const [showCelebration, setShowCelebration] = useState(false);
+            const isDailyFull = todayRecord.tasks.every(Boolean);
+            const todayMinutes = todayRecord.times.reduce((sum, value) => sum + Number(value || 0), 0);
+
+            useEffect(() => {
+                setQuote(getDailyQuote(userData.cycleId, currentDay, userData.tasks, Date.now()));
+            }, [userData.cycleId, currentDay, userData.tasks]);
+
+            const updateToday = (updates) => {
+                setDailyRecords((prev) => ({
+                    ...prev,
+                    [todayKey]: {
+                        ...(prev[todayKey] || todayRecord),
+                        ...updates
+                    }
+                }));
+            };
+
+            useEffect(() => {
+                if (isDailyFull && !todayRecord.fullDayEncouraged) {
+                    const encouragement = getFullDayEncouragement(
+                        userData.cycleId,
+                        currentDay,
+                        userData.tasks,
+                        todayRecord.times
+                    );
+                    updateToday({
+                        fullDayEncouraged: true,
+                        dayEncouragement: encouragement
+                    });
+                    setShowCelebration(true);
+                    setModalContent(encouragement);
+                    const timer = setTimeout(() => setShowCelebration(false), 2600);
+                    return () => clearTimeout(timer);
+                }
+                return undefined;
+            }, [isDailyFull, todayRecord.fullDayEncouraged]);
+
+            const handleToggle = (index) => {
+                if (todayRecord.tasks[index]) return;
+                const nextTasks = [...todayRecord.tasks];
+                nextTasks[index] = true;
+                const nextWhispers = [...todayRecord.whispers];
+                nextWhispers[index] = getTaskWhisper(
+                    userData.cycleId,
+                    currentDay,
+                    userData.tasks[index],
+                    userData.tasks[index].intention,
+                    {
+                        minutes: Number(todayRecord.times[index] || 0),
+                        completedCount: nextTasks.filter(Boolean).length
+                    }
+                );
+                updateToday({ tasks: nextTasks, whispers: nextWhispers });
+            };
+
+            const totalTime = useMemo(
+                () =>
+                    Object.entries(dailyRecords)
+                        .filter(([key]) => key.startsWith(`${userData.cycleId}_day_`))
+                        .reduce(
+                            (sum, [, value]) =>
+                                sum + value.times.reduce((inner, minute) => inner + Number(minute || 0), 0),
+                            0
+                        ),
+                [dailyRecords, userData.cycleId]
+            );
+
+            const completedDays = useMemo(
+                () =>
+                    Object.entries(dailyRecords).filter(
+                        ([key, value]) => key.startsWith(`${userData.cycleId}_day_`) && value.tasks.every(Boolean)
+                    ).length,
+                [dailyRecords, userData.cycleId]
+            );
 
             return (
-                <div className="max-w-5xl mx-auto px-4 py-8 space-y-8 animate-in slide-in-from-bottom-4 duration-700">
-                    <header className={`relative bg-white/40 rounded-[2.5rem] p-8 border border-[#E2E8CE] transition-all duration-1000 ${isDailyFull ? 'brightness-95' : ''}`}>
-                        <div className="flex justify-between items-start">
-                            <div><h1 className="text-2xl font-serif text-[#344E41]">SelfGrow 习惯养成</h1><span className="text-xs text-[#A3B18A] tracking-widest font-bold">DAY {currentDay + 1} OF 30</span></div>
-                            <div className="flex gap-2">
-                                <button onClick={() => setIsSettingsOpen(true)} className="p-2 bg-white/60 rounded-full shadow-sm hover:bg-white transition-all"><Icon name="settings" size={20} className="text-[#A3B18A]" /></button>
-                                <button onClick={onOpenHistory} className="p-2 bg-white/60 rounded-full shadow-sm hover:bg-white transition-all"><Icon name="clock" size={20} className="text-[#588157]" /></button>
+                <div className="max-w-5xl mx-auto px-4 py-8 space-y-8">
+                    <header className={`relative bg-white/50 rounded-[2.5rem] p-8 border border-[#E2E8CE] shadow-[0_24px_80px_rgba(88,129,87,0.08)] overflow-hidden ${isDailyFull ? "ring-1 ring-[#EBC7D1]" : ""}`}>
+                        {showCelebration && <CelebrationPetals count={10} />}
+                        <div className="flex justify-between items-start relative z-10">
+                            <div>
+                                <h1 className="text-2xl font-serif text-[#344E41]">SelfGrow 习惯养成</h1>
+                                <span className="text-xs text-[#A3B18A] tracking-widest font-bold">
+                                    DAY {currentDay + 1} OF 30
+                                </span>
                             </div>
+                            <button
+                                onClick={onOpenHistory}
+                                className="p-2 bg-white/70 rounded-full shadow-sm hover:bg-white transition-all"
+                                title="查看历史记录"
+                            >
+                                <Icon name="clock-3" size={20} className="text-[#588157]" />
+                            </button>
                         </div>
-                        <WatercolorTree dayIndex={currentDay} completedCount={todayRecord.tasks.filter(Boolean).length} />
-                        
-                        <div className="text-center mt-6 italic text-sm text-[#6B705C] max-w-md mx-auto min-h-[1.5rem]">
+
+                        <WatercolorTree
+                            dayIndex={currentDay}
+                            completedCount={todayRecord.tasks.filter(Boolean).length}
+                            isDailyFull={isDailyFull}
+                        />
+
+                        <div className="text-center mt-6 italic text-sm text-[#6B705C] max-w-lg mx-auto min-h-[1.5rem] relative z-10">
                             {isDailyFull ? (
-                                <span className="text-[#588157] font-medium animate-in fade-in duration-1000">今日任务已圆满完成，明天再见。</span>
+                                <span className="text-[#588157] font-medium">今日任务已圆满完成，树比清晨时更明亮了一些。</span>
                             ) : (
-                                <span className="animate-in fade-in duration-500">{quote}</span>
+                                <span>{quote}</span>
                             )}
                         </div>
-                        
-                        {isDailyFull && (
-                            <div className="absolute inset-0 flex items-center justify-center bg-white/5 backdrop-blur-[1px] rounded-[2.5rem] pointer-events-none">
-                                <span className="bg-white/90 px-6 py-2 rounded-full text-[#588157] font-medium border border-[#E2E8CE] shadow-sm animate-in zoom-in duration-500">今日圆满</span>
+
+                        <div className="mt-6 grid grid-cols-3 gap-3 relative z-10">
+                            <div className="bg-[#F2F4ED] rounded-2xl px-4 py-3">
+                                <p className="text-[10px] uppercase tracking-widest text-[#A3B18A] font-bold">Today</p>
+                                <p className="text-xl font-serif text-[#344E41]">{todayMinutes} min</p>
                             </div>
-                        )}
+                            <div className="bg-[#F2F4ED] rounded-2xl px-4 py-3">
+                                <p className="text-[10px] uppercase tracking-widest text-[#A3B18A] font-bold">Total</p>
+                                <p className="text-xl font-serif text-[#344E41]">{totalTime} min</p>
+                            </div>
+                            <div className="bg-[#F2F4ED] rounded-2xl px-4 py-3">
+                                <p className="text-[10px] uppercase tracking-widest text-[#A3B18A] font-bold">Full Days</p>
+                                <p className="text-xl font-serif text-[#344E41]">{completedDays} 天</p>
+                            </div>
+                        </div>
                     </header>
 
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                         <section className="bg-white/60 rounded-[2rem] p-6 border border-[#E2E8CE]">
                             <h3 className="font-serif text-lg text-[#344E41] mb-6">核心成长</h3>
                             <div className="space-y-4">
-                                {userData.tasks.map((task, idx) => (
-                                    <div key={idx} className={`flex items-center gap-4 p-5 rounded-2xl transition-all border ${todayRecord.tasks[idx] ? 'bg-[#E2E8CE]/20 border-[#E2E8CE]/40' : 'hover:bg-white/50 border-transparent'}`}>
-                                        <button onClick={() => handleToggle(idx)} className={`transition-transform active:scale-90 ${todayRecord.tasks[idx] ? 'text-[#588157]' : 'text-[#DAD7CD]'}`}>
-                                            <Icon name={todayRecord.tasks[idx] ? "check-circle-2" : "circle"} size={32} />
+                                {userData.tasks.map((task, index) => (
+                                    <div
+                                        key={task.id}
+                                        className={`flex items-center gap-4 p-5 rounded-2xl transition-all border ${
+                                            todayRecord.tasks[index]
+                                                ? "bg-[#E2E8CE]/20 border-[#E2E8CE]/40"
+                                                : "hover:bg-white/50 border-transparent"
+                                        }`}
+                                    >
+                                        <button
+                                            onClick={() => handleToggle(index)}
+                                            className={`transition-transform active:scale-90 ${
+                                                todayRecord.tasks[index] ? "text-[#588157]" : "text-[#DAD7CD]"
+                                            }`}
+                                        >
+                                            <Icon name={todayRecord.tasks[index] ? "check-circle-2" : "circle"} size={32} />
                                         </button>
                                         <div className="flex-1 min-w-0">
-                                            <span className={`block font-medium truncate ${todayRecord.tasks[idx] ? 'line-through text-[#A3B18A]' : 'text-[#344E41]'}`}>{task.name}</span>
-                                            <p className="text-xs text-[#6B705C] italic truncate truncate max-w-[140px]">“{task.intention}”</p>
-                                            {todayRecord.whispers[idx] && (
-                                                <p className="text-[11px] text-[#588157] font-medium pt-1 animate-in fade-in slide-in-from-left-2">{todayRecord.whispers[idx]}</p>
+                                            <span
+                                                className={`block font-medium truncate ${
+                                                    todayRecord.tasks[index] ? "line-through text-[#A3B18A]" : "text-[#344E41]"
+                                                }`}
+                                            >
+                                                {task.name}
+                                            </span>
+                                            <p className="text-xs text-[#6B705C] italic truncate max-w-[220px]">“{task.intention}”</p>
+                                            {todayRecord.whispers[index] && (
+                                                <p className="text-[10px] leading-5 text-[#588157] font-medium pt-1 max-w-[220px]">
+                                                    {todayRecord.whispers[index]}
+                                                </p>
                                             )}
                                         </div>
-                                        <div className={`shrink-0 w-16 h-16 flex flex-col items-center justify-center rounded-2xl border transition-all ${todayRecord.tasks[idx] ? 'bg-transparent border-transparent' : 'bg-[#F2F4ED] border-[#E2E8CE]/50'}`}>
+                                        <div
+                                            className={`shrink-0 w-16 h-16 flex flex-col items-center justify-center rounded-2xl border transition-all ${
+                                                todayRecord.tasks[index]
+                                                    ? "bg-transparent border-transparent"
+                                                    : "bg-[#F2F4ED] border-[#E2E8CE]/50"
+                                            }`}
+                                        >
                                             <span className="text-[9px] text-[#A3B18A] font-bold tracking-tighter">MIN</span>
-                                            <input type="number" readOnly={todayRecord.tasks[idx]} className={`w-full bg-transparent text-center font-serif text-xl outline-none ${todayRecord.tasks[idx] ? 'opacity-30' : 'focus:text-[#588157]'}`} 
-                                                   value={todayRecord.times[idx] || ""} onChange={e => { const nt = [...todayRecord.times]; nt[idx] = e.target.value; updateToday({times: nt}); }} />
+                                            <input
+                                                type="number"
+                                                readOnly={todayRecord.tasks[index]}
+                                                className={`w-full bg-transparent text-center font-serif text-xl outline-none ${
+                                                    todayRecord.tasks[index] ? "opacity-30" : "focus:text-[#588157]"
+                                                }`}
+                                                value={todayRecord.times[index] || ""}
+                                                onChange={(event) => {
+                                                    const nextTimes = [...todayRecord.times];
+                                                    nextTimes[index] = event.target.value;
+                                                    updateToday({ times: nextTimes });
+                                                }}
+                                            />
                                         </div>
                                     </div>
                                 ))}
@@ -413,103 +1117,190 @@
 
                         <section className="bg-white/60 rounded-[2rem] p-6 border border-[#E2E8CE]">
                             <h3 className="font-serif text-lg text-[#344E41] mb-6">时光足迹</h3>
-                            <div className="grid grid-cols-6 gap-3 mb-8">
-                                {[...Array(30)].map((_, i) => {
-                                    const rec = dailyRecords[`${userData.cycleId}_day_${i}`];
-                                    const done = rec?.tasks?.filter(Boolean).length || 0;
-                                    const isFuture = i > currentDay;
-                                    let bg = i === currentDay ? 'ring-2 ring-[#A3B18A] bg-white shadow-sm' : (done === 3 ? 'bg-[#588157] text-white' : (done > 0 ? 'bg-[#A3B18A]/60' : (isFuture ? 'bg-[#DAD7CD]/20' : 'bg-[#BDBDBA]/50')));
-                                    return <div key={i} className={`w-10 h-10 rounded-full flex items-center justify-center text-[10px] font-bold transition-all ${bg} ${done === 3 ? 'text-white' : 'text-[#6B705C]'}`}>{i + 1}</div>;
+                            <div className="grid grid-cols-5 sm:grid-cols-6 gap-3 mb-8">
+                                {Array.from({ length: 30 }).map((_, index) => {
+                                    const record = dailyRecords[`${userData.cycleId}_day_${index}`];
+                                    const doneCount = record?.tasks?.filter(Boolean).length || 0;
+                                    const dayMinutes = record?.times?.reduce((sum, value) => sum + Number(value || 0), 0) || 0;
+                                    const isFuture = index > currentDay;
+                                    const isCurrent = index === currentDay;
+                                    const isFull = doneCount === 3;
+                                    const baseClass = isCurrent
+                                        ? "ring-2 ring-[#A3B18A] bg-white shadow-sm"
+                                        : isFull
+                                            ? "bg-[#588157] text-white"
+                                            : doneCount > 0
+                                                ? "bg-[#A3B18A]/50 text-[#344E41]"
+                                                : isFuture
+                                                    ? "bg-[#DAD7CD]/20 text-[#A3B18A]"
+                                                    : "bg-[#BDBDBA]/50 text-[#6B705C]";
+                                    return (
+                                        <div
+                                            key={index}
+                                            className={`aspect-square rounded-2xl flex flex-col items-center justify-center text-[10px] font-bold transition-all px-1 ${baseClass}`}
+                                        >
+                                            <span>{index + 1}</span>
+                                            {isFull && <span className="text-[9px] font-medium opacity-90">{dayMinutes}m</span>}
+                                        </div>
+                                    );
                                 })}
                             </div>
-                            <div className="grid grid-cols-2 gap-4">
-                                <div className="bg-[#E2E8CE]/30 p-4 rounded-2xl shadow-inner"><p className="text-[10px] font-bold text-[#A3B18A] uppercase tracking-widest">今日</p><p className="text-xl font-serif text-[#344E41]">{todayRecord.times.reduce((a,b)=>a+Number(b),0)} min</p></div>
-                                <div className="bg-[#A3B18A]/10 p-4 rounded-2xl shadow-inner"><p className="text-[10px] font-bold text-[#A3B18A] uppercase tracking-widest">累计</p><p className="text-xl font-serif text-[#344E41]">{totalTime} min</p></div>
+
+                            <div className="bg-[#F2F4ED] rounded-2xl p-4 border border-[#E2E8CE]/50">
+                                <div className="flex items-center justify-between gap-3 mb-3">
+                                    <p className="text-[10px] font-bold text-[#A3B18A] uppercase tracking-[0.28em]">今日回响</p>
+                                    <span className="text-[10px] italic text-[#A3B18A]">每日完成后留给自己的一段话</span>
+                                </div>
+                                <div className="rounded-[1.25rem] bg-white/75 border border-[#E2E8CE]/60 px-4 py-4">
+                                    <p className="text-[15px] text-[#5F6F61] leading-7 min-h-[4.2rem] tracking-[0.01em]">
+                                        {todayRecord.dayEncouragement || "当三项任务都完成后，森林会在这里替你留下一段温柔而郑重的回响。"}
+                                    </p>
+                                </div>
                             </div>
                         </section>
                     </div>
 
-                    <footer className={`bg-white/60 rounded-[2rem] p-6 border border-[#E2E8CE] transition-all duration-700 ${todayRecord.journalSubmitted ? 'opacity-70' : ''}`}>
-                        <div className="flex items-baseline gap-4 mb-4">
+                    <footer className={`bg-white/60 rounded-[2rem] p-6 border border-[#E2E8CE] transition-all ${todayRecord.journalSubmitted ? "opacity-80" : ""}`}>
+                        <div className="flex items-baseline gap-4 mb-4 flex-wrap">
                             <h3 className="font-serif text-lg text-[#344E41]">心灵留白</h3>
                             <span className="text-[10px] text-[#A3B18A] font-light italic">
-                                {todayRecord.journalSubmitted ? '今日感悟已封存' : '三段式复盘：10min记录事实、10min深度提问、10min写下结论。'}
+                                {todayRecord.journalSubmitted ? "今日感悟已封存" : "三段式复盘：10min 记录事实、10min 深度提问、10min 写下结论。"}
                             </span>
                         </div>
-                        <textarea readOnly={todayRecord.journalSubmitted} className="w-full h-32 bg-transparent outline-none resize-none text-[#6B705C] placeholder:text-[#DAD7CD] leading-relaxed no-scrollbar" placeholder="笔触间，看见自己..."
-                                  value={todayRecord.journal} onChange={e => updateToday({ journal: e.target.value })} />
+                        <textarea
+                            readOnly={todayRecord.journalSubmitted}
+                            className="w-full h-32 bg-transparent outline-none resize-none text-[#6B705C] placeholder:text-[#DAD7CD] leading-relaxed no-scrollbar"
+                            placeholder="笔触间，看见自己..."
+                            value={todayRecord.journal}
+                            onChange={(event) => updateToday({ journal: event.target.value })}
+                        />
                         <div className="flex justify-end mt-4">
-                            <button disabled={todayRecord.journalSubmitted} onClick={() => { if(!todayRecord.journal) return; updateToday({ journalSubmitted: true }); setModalContent("存入成功，愿文字带给你成长的力量。"); }}
-                                    className={`px-8 py-2.5 rounded-full text-sm flex items-center gap-2 transition-all shadow-md ${todayRecord.journalSubmitted ? 'bg-[#DAD7CD] text-[#6B705C] cursor-not-allowed shadow-none' : 'bg-[#344E41] text-white hover:bg-[#3A5A40] shadow-[#344E41]/20'}`}>
-                                <Icon name={todayRecord.journalSubmitted ? "lock" : "send"} size={14} /> {todayRecord.journalSubmitted ? '已存入' : '存入森林'}
+                            <button
+                                disabled={todayRecord.journalSubmitted}
+                                onClick={() => {
+                                    if (!todayRecord.journal.trim()) return;
+                                    updateToday({ journalSubmitted: true });
+                                    setModalContent("存入成功。愿这一页文字，替你保留今天的清醒与力量。");
+                                }}
+                                className={`px-8 py-2.5 rounded-full text-sm flex items-center gap-2 transition-all shadow-md ${
+                                    todayRecord.journalSubmitted
+                                        ? "bg-[#DAD7CD] text-[#6B705C] cursor-not-allowed shadow-none"
+                                        : "bg-[#344E41] text-white hover:bg-[#3A5A40] shadow-[#344E41]/20"
+                                }`}
+                            >
+                                <Icon name={todayRecord.journalSubmitted ? "lock" : "send"} size={14} />
+                                {todayRecord.journalSubmitted ? "已存入" : "存入森林"}
                             </button>
                         </div>
                     </footer>
-
-                    {isSettingsOpen && (
-                        <div className="fixed inset-0 z-[200] flex items-center justify-center p-6">
-                            <div className="absolute inset-0 bg-black/10 backdrop-blur-sm" onClick={() => setIsSettingsOpen(false)} />
-                            <div className="bg-white p-8 rounded-[2rem] max-w-sm w-full shadow-2xl relative animate-in zoom-in-95 duration-200">
-                                <h4 className="text-xl font-serif text-[#344E41] mb-6 flex items-center gap-2"><Icon name="settings" size={20} /> 系统设置</h4>
-                                <input type="password" placeholder="Gemini API Key" className="w-full bg-[#FDFCF8] rounded-xl px-4 py-3 border border-[#DAD7CD] mb-4 outline-none focus:ring-1 focus:ring-[#A3B18A] transition-all" 
-                                       defaultValue={userData.apiKey} onBlur={e => setUserData({...userData, apiKey: e.target.value})} />
-                                <button onClick={() => setIsSettingsOpen(false)} className="w-full py-3 bg-[#588157] text-white rounded-xl font-bold hover:bg-[#344E41] transition-all">保存设置</button>
-                            </div>
-                        </div>
-                    )}
                 </div>
             );
         }
 
-        // --- 历史记录 ---
-        function HistoryView({ archivedCycles, dailyRecords, userData, onBack }) { 
+        function HistoryView({ archivedCycles, dailyRecords, userData, onBack }) {
             const [selectedCycleId, setSelectedCycleId] = useState(userData.cycleId);
             const [selectedDay, setSelectedDay] = useState(0);
-            const activeConfig = selectedCycleId === userData.cycleId ? userData : archivedCycles.find(c => c.config.cycleId === selectedCycleId)?.config;
-            const record = dailyRecords[`${selectedCycleId}_day_${selectedDay}`];
+
+            const activeArchive = archivedCycles.find((cycle) => cycle.config.cycleId === selectedCycleId);
+            const activeConfig = selectedCycleId === userData.cycleId ? userData : activeArchive?.config;
+            const recordSource = selectedCycleId === userData.cycleId ? dailyRecords : activeArchive?.records || {};
+            const record = recordSource[`${selectedCycleId}_day_${selectedDay}`];
+
             return (
-                <div className="max-w-4xl mx-auto px-6 py-12 min-h-screen animate-in fade-in duration-500">
-                    <button onClick={onBack} className="flex items-center gap-2 text-[#A3B18A] hover:text-[#588157] mb-10 font-medium transition-colors"><Icon name="arrow-left" size={20} /> 返回当前森林</button>
+                <div className="max-w-5xl mx-auto px-6 py-12 min-h-screen">
+                    <button
+                        onClick={onBack}
+                        className="flex items-center gap-2 text-[#A3B18A] hover:text-[#588157] mb-10 font-medium transition-colors"
+                    >
+                        <Icon name="arrow-left" size={20} /> 返回当前森林
+                    </button>
+
                     <div className="mb-8">
-                        <label className="text-xs uppercase tracking-widest text-[#A3B18A] block mb-2 font-bold">选择成长周期</label>
-                        <select className="bg-white border border-[#E2E8CE] rounded-xl px-4 py-2 outline-none text-sm text-[#344E41]" value={selectedCycleId} onChange={e => setSelectedCycleId(Number(e.target.value))}>
+                        <label className="text-xs uppercase tracking-widest text-[#A3B18A] block mb-2 font-bold">
+                            选择成长周期
+                        </label>
+                        <select
+                            className="bg-white border border-[#E2E8CE] rounded-xl px-4 py-2 outline-none text-sm text-[#344E41]"
+                            value={selectedCycleId}
+                            onChange={(event) => setSelectedCycleId(Number(event.target.value))}
+                        >
                             <option value={userData.cycleId}>当前正在进行的计划</option>
-                            {archivedCycles.map((c, i) => (
-                                <option key={i} value={c.config.cycleId}>往期计划 ({new Date(c.config.startDate).toLocaleDateString()})</option>
+                            {archivedCycles.map((cycle) => (
+                                <option key={cycle.config.cycleId} value={cycle.config.cycleId}>
+                                    往期计划（{new Date(cycle.config.startDate).toLocaleDateString("zh-CN")}）
+                                </option>
                             ))}
                         </select>
                     </div>
+
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-10">
                         <div className="space-y-4">
                             <h2 className="text-2xl font-serif text-[#344E41]">时光回响</h2>
                             <div className="grid grid-cols-5 gap-3">
-                                {[...Array(30)].map((_, i) => (
-                                    <button key={i} onClick={() => setSelectedDay(i)}
-                                            className={`w-full aspect-square rounded-xl flex items-center justify-center text-xs transition-all ${selectedDay === i ? 'bg-[#344E41] text-white shadow-lg scale-105' : 'bg-[#E2E8CE]/40'}`}>
-                                        {i + 1}
+                                {Array.from({ length: 30 }).map((_, index) => (
+                                    <button
+                                        key={index}
+                                        onClick={() => setSelectedDay(index)}
+                                        className={`w-full aspect-square rounded-xl flex items-center justify-center text-xs transition-all ${
+                                            selectedDay === index
+                                                ? "bg-[#344E41] text-white shadow-lg scale-105"
+                                                : "bg-[#E2E8CE]/40 text-[#6B705C]"
+                                        }`}
+                                    >
+                                        {index + 1}
                                     </button>
                                 ))}
                             </div>
                         </div>
-                        <div className="md:col-span-2 bg-white/80 backdrop-blur-sm rounded-3xl p-8 border border-[#E2E8CE] shadow-sm">
-                            {record ? (
+
+                        <div className="md:col-span-2 bg-white/80 rounded-3xl p-8 border border-[#E2E8CE] shadow-sm">
+                            {record && activeConfig ? (
                                 <div className="space-y-6">
                                     <h4 className="text-xl font-serif text-[#344E41]">DAY {selectedDay + 1} 存档</h4>
                                     <div className="space-y-3">
-                                        {activeConfig.tasks.map((task, idx) => (
-                                            <div key={idx} className="flex flex-col p-3 rounded-xl bg-[#FDFCF8] border border-[#E2E8CE]/30">
+                                        {activeConfig.tasks.map((task, index) => (
+                                            <div key={task.id || index} className="flex flex-col p-4 rounded-xl bg-[#FDFCF8] border border-[#E2E8CE]/30">
                                                 <div className="flex items-center gap-2">
-                                                    <Icon name={record.tasks[idx] ? "check-circle-2" : "circle"} size={18} className={record.tasks[idx] ? "text-[#588157]" : "text-[#DAD7CD]"} />
-                                                    <span className="text-sm font-medium">{task.name}</span>
+                                                    <Icon
+                                                        name={record.tasks[index] ? "check-circle-2" : "circle"}
+                                                        size={18}
+                                                        className={record.tasks[index] ? "text-[#588157]" : "text-[#DAD7CD]"}
+                                                    />
+                                                    <span className="text-sm font-medium text-[#344E41]">{task.name}</span>
                                                 </div>
-                                                <span className="pl-7 text-[10px] text-[#A3B18A]">专注时长: {record.times[idx] || 0} min</span>
+                                                <span className="pl-7 text-[10px] text-[#A3B18A]">
+                                                    专注时长：{record.times[index] || 0} min
+                                                </span>
+                                                {record.whispers?.[index] && (
+                                                    <span className="pl-7 text-[11px] text-[#588157] mt-1 min-h-[1rem]">
+                                                        {record.whispers[index]}
+                                                    </span>
+                                                )}
                                             </div>
                                         ))}
                                     </div>
-                                    <div className="pt-4 border-t border-[#F0F0F0] italic text-[#6B705C] text-sm leading-relaxed whitespace-pre-wrap">“{record.journal || "那日森林静谧，未留只言片语。"}”</div>
+
+                                    {record.dayEncouragement && (
+                                        <div className="rounded-2xl bg-[#F2F4ED] border border-[#E2E8CE]/50 p-5">
+                                            <p className="text-[10px] uppercase tracking-widest text-[#A3B18A] font-bold mb-2">今日回响</p>
+                                            <p className="text-sm leading-7 text-[#5F6F61]">{record.dayEncouragement}</p>
+                                        </div>
+                                    )}
+
+                                    <div className="rounded-2xl bg-[#FDFCF8] border border-[#E2E8CE]/40 p-5">
+                                        <p className="text-[10px] uppercase tracking-widest text-[#A3B18A] font-bold mb-2">
+                                            心灵留白
+                                        </p>
+                                        <div className="italic text-[#6B705C] text-sm leading-relaxed whitespace-pre-wrap">
+                                            “{record.journal || "那日森林静谧，未留只言片语。"}”
+                                        </div>
+                                    </div>
                                 </div>
                             ) : (
-                                <div className="flex flex-col items-center justify-center h-64 text-[#DAD7CD]"><Icon name="calendar" size={48} className="mb-4 opacity-50" /><p>那一页尚无轨迹</p></div>
+                                <div className="flex flex-col items-center justify-center h-64 text-[#DAD7CD]">
+                                    <Icon name="calendar" size={48} className="mb-4 opacity-50" />
+                                    <p>那一页尚无轨迹</p>
+                                </div>
                             )}
                         </div>
                     </div>
@@ -517,27 +1308,93 @@
             );
         }
 
-        // --- 周期结语报告 ---
-        function FinalReport({ userData, dailyRecords, onReset }) { 
+        function FinalReport({ userData, dailyRecords, onReset }) {
+            const report = useMemo(
+                () => getFinalReport(userData.cycleId, userData, dailyRecords),
+                [userData, dailyRecords]
+            );
+
             return (
-                <div className="max-w-3xl mx-auto py-16 px-6 animate-in fade-in duration-1000">
-                    <div className="bg-white p-12 rounded-[3rem] shadow-xl border border-[#E2E8CE] relative overflow-hidden">
-                        <div className="absolute top-0 right-0 p-8 opacity-5"><Icon name="award" size={120} /></div>
-                        <h2 className="text-3xl font-serif text-[#344E41] mb-8 text-center">30天成长见证</h2>
-                        <div className="text-[#6B705C] leading-loose italic text-center px-4 mb-8">
-                            恭喜你走完了这 30 天。这棵树已在你心底扎根。点击下方开启新旅程，往期记录将完整封存在“时光回响”中。
+                <div className="max-w-5xl mx-auto py-16 px-6">
+                    <div className="bg-white/90 p-10 md:p-12 rounded-[3rem] shadow-xl border border-[#E2E8CE] relative overflow-hidden">
+                        <div className="absolute top-0 right-0 p-8 opacity-5">
+                            <Icon name="award" size={120} />
                         </div>
-                        <div className="mt-16 flex flex-col items-center border-t border-dashed pt-12">
-                            <button onClick={onReset} className="px-12 py-4 bg-[#344E41] text-white rounded-2xl font-bold shadow-lg hover:scale-105 transition-all uppercase tracking-widest">开启新周期</button>
+                        <h2 className="text-3xl font-serif text-[#344E41] mb-10 text-center">30 天成长见证</h2>
+
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+                            <div className="rounded-2xl bg-[#F2F4ED] p-5">
+                                <p className="text-[10px] uppercase tracking-widest text-[#A3B18A] font-bold">完成率</p>
+                                <p className="text-2xl font-serif text-[#344E41] mt-2">{report.completionRate}%</p>
+                            </div>
+                            <div className="rounded-2xl bg-[#F2F4ED] p-5">
+                                <p className="text-[10px] uppercase tracking-widest text-[#A3B18A] font-bold">总投入时长</p>
+                                <p className="text-2xl font-serif text-[#344E41] mt-2">{report.totalMinutes} min</p>
+                            </div>
+                            <div className="rounded-2xl bg-[#F2F4ED] p-5">
+                                <p className="text-[10px] uppercase tracking-widest text-[#A3B18A] font-bold">完成任务数</p>
+                                <p className="text-2xl font-serif text-[#344E41] mt-2">{report.totalCompletedTasks}</p>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_0.8fr] gap-8">
+                            <section className="space-y-5">
+                                <div className="rounded-[2rem] bg-[#FDFCF8] border border-[#E2E8CE]/50 p-6">
+                                    <h3 className="font-serif text-xl text-[#344E41] mb-4">你的成长评语</h3>
+                                    <p className="text-[#6B705C] leading-8">{report.summary}</p>
+                                </div>
+
+                                <div className="rounded-[2rem] bg-[#FDFCF8] border border-[#E2E8CE]/50 p-6">
+                                    <h3 className="font-serif text-xl text-[#344E41] mb-4">这段时间的关键词</h3>
+                                    <div className="flex flex-wrap gap-3">
+                                        {report.keywords.length ? (
+                                            report.keywords.map((keyword) => (
+                                                <span
+                                                    key={keyword}
+                                                    className="px-4 py-2 rounded-full bg-[#E2E8CE]/50 text-[#588157] text-sm font-medium"
+                                                >
+                                                    {keyword}
+                                                </span>
+                                            ))
+                                        ) : (
+                                            <span className="text-sm text-[#6B705C]">这 30 天更多是安静地积累，没有留下高频文字标签。</span>
+                                        )}
+                                    </div>
+                                </div>
+                            </section>
+
+                            <section className="rounded-[2rem] bg-[#FDFCF8] border border-[#E2E8CE]/50 p-6">
+                                <h3 className="font-serif text-xl text-[#344E41] mb-5">三件小事的回响</h3>
+                                <div className="space-y-4">
+                                    {report.perTaskStats.map((item) => (
+                                        <div key={item.id} className="rounded-2xl bg-white border border-[#E2E8CE]/40 p-4">
+                                            <p className="text-base font-medium text-[#344E41]">{item.name}</p>
+                                            <p className="text-xs italic text-[#6B705C] mt-1">“{item.intention}”</p>
+                                            <div className="flex justify-between text-sm text-[#588157] mt-3">
+                                                <span>{item.completedDays} 天完成</span>
+                                                <span>{item.totalMinutes} min</span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </section>
+                        </div>
+
+                        <div className="mt-12 pt-8 border-t border-dashed border-[#DAD7CD] flex justify-center">
+                            <button
+                                onClick={onReset}
+                                className="px-12 py-4 bg-[#344E41] text-white rounded-2xl font-bold shadow-lg hover:scale-105 transition-all tracking-widest"
+                            >
+                                开启新周期
+                            </button>
                         </div>
                     </div>
                 </div>
             );
         }
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
+        const root = ReactDOM.createRoot(document.getElementById("root"));
         root.render(<App />);
     </script>
 </body>
-
 </html>
